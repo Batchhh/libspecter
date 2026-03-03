@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
   pull_request:
     branches: [main]
 
@@ -81,3 +82,61 @@ jobs:
             target/aarch64-apple-ios/release/libspecter.a
             specter.h
           retention-days: 7
+
+  release:
+    name: Publish Release
+    needs: [lint, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build libspecter.a (release)
+        run: make
+
+      - name: Verify exported symbols
+        run: make check
+
+      - name: Package release artifacts
+        run: |
+          ARCHIVE="specter-${{ github.ref_name }}-aarch64-apple-ios.tar.gz"
+          tar -czf "$ARCHIVE" \
+            -C target/aarch64-apple-ios/release libspecter.a \
+            specter.h \
+            Makefile
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRERELEASE=""
+          if [[ "${{ github.ref_name }}" == *-* ]]; then
+            PRERELEASE="--prerelease"
+          fi
+          gh release create "${{ github.ref_name }}" \
+            --title "Specter ${{ github.ref_name }}" \
+            --generate-notes \
+            $PRERELEASE \
+            "${{ env.ARCHIVE }}" \
+            "${{ env.ARCHIVE }}.sha256"

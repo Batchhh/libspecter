@@ -762,7 +762,7 @@ pub unsafe extern "C" fn mem_brk_max_breakpoints() -> i32 {
 /// - `reloc_count`   : length of both relocation arrays (0 = no relocations)
 /// - `near_address`  : hint for cave allocation; pass 0 for no preference
 /// - `auto_free`     : ignored by this implementation — shellcode is always stored in the
-///                     registry so `mem_shellcode_free` controls the lifetime
+///   registry so `mem_shellcode_free` controls the lifetime
 /// - `address_out`   : receives the address of the loaded shellcode (required, non-null)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mem_shellcode_load(

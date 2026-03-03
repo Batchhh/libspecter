@@ -270,7 +270,7 @@ pub fn find_caves(
 ) -> Result<Vec<CodeCave>, CodeCaveError> {
     let mut all_caves = Vec::new();
 
-    let min_nops = (min_size + 3) / 4;
+    let min_nops = min_size.div_ceil(4);
     if let Ok(nop_caves) = find_nop_sequences(start, size, min_nops) {
         all_caves.extend(nop_caves);
     }
@@ -371,11 +371,7 @@ pub fn allocate_cave_near(target: usize, size: usize) -> Result<CodeCave, CodeCa
     let caves = find_caves_in_image(&image_name, size)?;
 
     for mut cave in caves {
-        let distance = if cave.address > target {
-            cave.address - target
-        } else {
-            target - cave.address
-        };
+        let distance = cave.address.abs_diff(target);
 
         if distance <= BRANCH_RANGE && cave.size >= size {
             let registry = REGISTRY.lock();

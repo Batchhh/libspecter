@@ -75,25 +75,13 @@ struct ArmThreadState64 {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct ArmDebugState64 {
     bvr: [u64; 16],
     bcr: [u64; 16],
     wvr: [u64; 16],
     wcr: [u64; 16],
     mdscr_el1: u64,
-}
-
-impl Default for ArmDebugState64 {
-    fn default() -> Self {
-        Self {
-            bvr: [0; 16],
-            bcr: [0; 16],
-            wvr: [0; 16],
-            wcr: [0; 16],
-            mdscr_el1: 0,
-        }
-    }
 }
 
 #[repr(C)]
@@ -195,12 +183,12 @@ impl HookManager {
     /// Removes a hook from the manager
     fn remove_hook(&mut self, old: usize) -> Result<(), BrkHookError> {
         for slot in self.hooks.iter_mut() {
-            if let Some(hook) = slot {
-                if hook.old == old {
-                    *slot = None;
-                    self.active_count -= 1;
-                    return Ok(());
-                }
+            if let Some(hook) = slot
+                && hook.old == old
+            {
+                *slot = None;
+                self.active_count -= 1;
+                return Ok(());
             }
         }
         Err(BrkHookError::NotFound(old))
@@ -401,14 +389,12 @@ unsafe fn apply_debug_state(manager: &HookManager) -> Result<(), BrkHookError> {
         let task = mach_task_self();
         let mut state = ArmDebugState64::default();
 
-        let mut bp_idx = 0;
-        for hook in manager.hooks.iter().flatten() {
+        for (bp_idx, hook) in manager.hooks.iter().flatten().enumerate() {
             if bp_idx >= manager.hw_breakpoints as usize {
                 break;
             }
             state.bvr[bp_idx] = hook.old as u64;
             state.bcr[bp_idx] = BCR_ENABLE;
-            bp_idx += 1;
         }
 
         if task_set_state(
@@ -613,14 +599,12 @@ pub unsafe fn resume_self() -> Result<(), BrkHookError> {
 
         {
             let manager = MANAGER.lock();
-            let mut bp_idx = 0;
-            for hook in manager.hooks.iter().flatten() {
+            for (bp_idx, hook) in manager.hooks.iter().flatten().enumerate() {
                 if bp_idx >= manager.hw_breakpoints as usize {
                     break;
                 }
                 state.bvr[bp_idx] = hook.old as u64;
                 state.bcr[bp_idx] = BCR_ENABLE;
-                bp_idx += 1;
             }
         }
 

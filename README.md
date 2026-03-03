@@ -24,6 +24,18 @@ make check                             # verify exported symbols match specter.h
 ## Docs
 
 | | |
-|---|---|
 | [docs/usage.md](docs/usage.md) | Full API reference with C and C++ examples |
 | [docs/architecture.md](docs/architecture.md) | Internals — hook engine, stealth patching, hardware breakpoints |
+
+## Contributing
+
+1. Fork the repo and create a branch from `main`.
+2. Run `cargo fmt --all` and `cargo clippy --lib -- -D warnings` before pushing.
+3. Keep PRs focused — one logical change per pull request.
+4. Open an issue first for anything large or architectural.
+
+Bug reports and feature requests are welcome via [GitHub Issues](https://github.com/Batchhh/libspecter/issues).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

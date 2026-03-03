@@ -83,11 +83,11 @@ impl Patch {
                 logger::error(&format!("Revert write failed: {}", _e));
             }
 
-            if let Some(cave) = &self.cave {
-                if let Err(_e) = crate::memory::info::code_cave::free_cave(cave.address) {
-                    #[cfg(feature = "dev_release")]
-                    logger::error(&format!("Cave free failed: {}", _e));
-                }
+            if let Some(cave) = &self.cave
+                && let Err(_e) = crate::memory::info::code_cave::free_cave(cave.address)
+            {
+                #[cfg(feature = "dev_release")]
+                logger::error(&format!("Cave free failed: {}", _e));
             }
 
             thread::resume_threads(&suspended);

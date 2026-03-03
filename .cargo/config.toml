@@ -1,2 +1,2 @@
 [build]
-target = "aarch64-apple-ios"
+target = ["aarch64-apple-ios", "aarch64-apple-darwin"]
