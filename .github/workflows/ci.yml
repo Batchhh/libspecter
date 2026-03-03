@@ -122,13 +122,15 @@ jobs:
           echo "${{ github.token }}" | oras login ghcr.io \
             --username "${{ github.actor }}" --password-stdin
 
-          oras push "ghcr.io/${{ github.repository }}:${{ github.ref_name }}" \
+          REPO_LC="${GITHUB_REPOSITORY,,}"
+
+          oras push "ghcr.io/${REPO_LC}:${{ github.ref_name }}" \
             --artifact-type "application/vnd.specter.library.v1" \
             target/aarch64-apple-ios/release/libspecter.a:application/octet-stream \
             specter.h:text/plain
 
           if [[ "${{ github.ref_name }}" != *-* ]]; then
-            oras tag "ghcr.io/${{ github.repository }}:${{ github.ref_name }}" latest
+            oras tag "ghcr.io/${REPO_LC}:${{ github.ref_name }}" latest
           fi
 
   release:
