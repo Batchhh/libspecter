@@ -24,6 +24,7 @@ make check                            # verify exported symbols match specter.h
 ## Docs
 
 [docs/usage.md](docs/usage.md)
+
 [docs/architecture.md](docs/architecture.md)
 
 ## Contributing
