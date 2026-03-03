@@ -1,6 +1,8 @@
 # Specter
 
 [![CI](https://github.com/Batchhh/libspecter/actions/workflows/ci.yml/badge.svg)](https://github.com/Batchhh/libspecter/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/specter-mem.svg)](https://crates.io/crates/specter-mem)
+
 
 ARM64 memory manipulation framework for iOS/macOS. Compiled as a static library (`libspecter.a`) consumed via a plain C/C++ header (`specter.h`).
 
