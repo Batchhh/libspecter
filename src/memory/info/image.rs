@@ -4,12 +4,12 @@
 use crate::utils::logger;
 use std::ffi::CStr;
 
-#[cfg(not(feature = "dev_release"))]
-use mach2::dyld::{_dyld_get_image_header, _dyld_get_image_name, _dyld_image_count};
 #[cfg(feature = "dev_release")]
 use mach2::dyld::{
     _dyld_get_image_header, _dyld_get_image_name, _dyld_get_image_vmaddr_slide, _dyld_image_count,
 };
+#[cfg(not(feature = "dev_release"))]
+use mach2::dyld::{_dyld_get_image_header, _dyld_get_image_name, _dyld_image_count};
 use thiserror::Error;
 
 #[derive(Error, Debug)]

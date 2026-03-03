@@ -106,9 +106,7 @@ impl Hook {
     where
         F: Copy,
     {
-        unsafe {
-            std::mem::transmute_copy(&self.trampoline)
-        }
+        unsafe { std::mem::transmute_copy(&self.trampoline) }
     }
     /// Removes the hook, restoring the original code
     pub fn remove(self) {
@@ -167,8 +165,9 @@ impl Hook {
 /// * `Result<Hook, HookError>` - The installed hook or an error
 pub unsafe fn install(rva: usize, replacement: usize) -> Result<Hook, HookError> {
     unsafe {
-        let image_name = config::get_target_image_name()
-            .ok_or_else(|| crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string()))?;
+        let image_name = config::get_target_image_name().ok_or_else(|| {
+            crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string())
+        })?;
         let base = image::get_image_base(&image_name)?;
         let target = base + rva;
         let trampoline = install_at_address(target, replacement)?;
@@ -460,7 +459,7 @@ unsafe fn install_regular_hook(target: usize, replacement: usize) -> Result<usiz
     unsafe {
         let suspended = thread::suspend_other_threads()?;
         let trampoline = alloc_trampoline().ok_or(HookError::AllocationFailed)?;
-        if trampoline.is_null() { 
+        if trampoline.is_null() {
             thread::resume_threads(&suspended);
             return Err(HookError::AllocationFailed);
         }
@@ -678,9 +677,7 @@ unsafe fn alloc_trampoline_near(target: usize) -> Option<*mut c_void> {
 
 /// Patches a single instruction via stealth write
 unsafe fn patch_short(target: usize, instr: u32) -> bool {
-    unsafe {
-        patch::stealth_write(target, &instr.to_le_bytes()).is_ok()
-    }
+    unsafe { patch::stealth_write(target, &instr.to_le_bytes()).is_ok() }
 }
 
 /// Patches code with polymorphic redirect branch via stealth write
@@ -818,8 +815,9 @@ unsafe fn relocate_instruction(instr: u32, pc: usize, tramp: usize) -> Option<us
 /// * `Result<Hook, HookError>` - The installed hook or an error
 pub unsafe fn install_in_cave(rva: usize, replacement: usize) -> Result<Hook, HookError> {
     unsafe {
-        let image_name = config::get_target_image_name()
-            .ok_or_else(|| crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string()))?;
+        let image_name = config::get_target_image_name().ok_or_else(|| {
+            crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string())
+        })?;
         let base = image::get_image_base(&image_name)?;
         let target = base + rva;
         install_in_cave_at_address(target, replacement)
@@ -858,7 +856,8 @@ pub unsafe fn install_in_cave_at_address(
         let mut cave_offset = 0;
         for i in 0..4 {
             let instr = super::rw::read::<u32>(target + i * 4).unwrap_or(0);
-            if let Some(size) = relocate_instruction(instr, target + i * 4, buf_base + cave_offset) {
+            if let Some(size) = relocate_instruction(instr, target + i * 4, buf_base + cave_offset)
+            {
                 cave_offset += size;
             } else {
                 code_cave::free_cave(cave.address).ok();

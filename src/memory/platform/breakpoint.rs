@@ -16,7 +16,7 @@ use mach2::kern_return::KERN_SUCCESS;
 use mach2::mach_init::mach_thread_self;
 use mach2::mach_port::{mach_port_allocate, mach_port_deallocate, mach_port_insert_right};
 use mach2::message::{mach_msg, mach_msg_header_t, mach_msg_type_name_t};
-use mach2::port::{mach_port_t, MACH_PORT_NULL, MACH_PORT_RIGHT_RECEIVE};
+use mach2::port::{MACH_PORT_NULL, MACH_PORT_RIGHT_RECEIVE, mach_port_t};
 use mach2::task::task_threads;
 use mach2::thread_act::thread_set_state;
 use mach2::traps::mach_task_self;
@@ -455,8 +455,7 @@ unsafe fn apply_debug_state(manager: &HookManager) -> Result<(), BrkHookError> {
 /// * `Result<Breakpoint, BrkHookError>` - The installed breakpoint or an error
 pub unsafe fn install(rva: usize, replacement: usize) -> Result<Breakpoint, BrkHookError> {
     unsafe {
-        let image_name = crate::config::get_target_image_name()
-            .ok_or(BrkHookError::InitFailed)?;
+        let image_name = crate::config::get_target_image_name().ok_or(BrkHookError::InitFailed)?;
         let base = crate::memory::image::get_image_base(&image_name)
             .map_err(|_| BrkHookError::InitFailed)?;
         install_at_address(base + rva, replacement)

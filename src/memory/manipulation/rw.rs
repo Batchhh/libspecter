@@ -54,8 +54,9 @@ pub unsafe fn read<T: Copy>(address: usize) -> Result<T, RwError> {
 /// * `Result<T, RwError>` - The read value or an error
 pub unsafe fn read_at_rva<T: Copy>(rva: usize) -> Result<T, RwError> {
     unsafe {
-        let image_name = crate::config::get_target_image_name()
-            .ok_or_else(|| crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string()))?;
+        let image_name = crate::config::get_target_image_name().ok_or_else(|| {
+            crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string())
+        })?;
         let base = crate::memory::info::image::get_image_base(&image_name)?;
         read::<T>(base + rva)
     }
@@ -150,8 +151,9 @@ pub unsafe fn write_code<T: Copy>(address: usize, value: T) -> Result<(), RwErro
 /// * `Result<(), RwError>` - A result indicating success or failure
 pub unsafe fn write_at_rva<T: Copy>(rva: usize, value: T) -> Result<(), RwError> {
     unsafe {
-        let image_name = crate::config::get_target_image_name()
-            .ok_or_else(|| crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string()))?;
+        let image_name = crate::config::get_target_image_name().ok_or_else(|| {
+            crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string())
+        })?;
         let base = crate::memory::info::image::get_image_base(&image_name)?;
         write::<T>(base + rva, value)
     }

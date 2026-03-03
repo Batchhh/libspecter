@@ -13,7 +13,7 @@
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // Error code constants
@@ -125,11 +125,8 @@ unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, i32> {
     if ptr.is_null() {
         return Err(MEM_ERR_NULL);
     }
-    unsafe {
-        CStr::from_ptr(ptr).to_str().map_err(|_| MEM_ERR_GENERIC)
-    }
+    unsafe { CStr::from_ptr(ptr).to_str().map_err(|_| MEM_ERR_GENERIC) }
 }
-
 
 // Init API
 
@@ -141,10 +138,7 @@ unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, i32> {
 /// `base_out` is optional: when non-null, receives the resolved load address of the image
 /// (ASLR slide applied).  Returns `MEM_ERR_NOT_FOUND` if the image is not currently loaded.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn mem_init(
-    image_name: *const c_char,
-    base_out: *mut usize,
-) -> i32 {
+pub unsafe extern "C" fn mem_init(image_name: *const c_char, base_out: *mut usize) -> i32 {
     let name = unsafe {
         match cstr_to_str(image_name) {
             Ok(s) => s,
@@ -325,11 +319,7 @@ pub unsafe extern "C" fn mem_hook_remove(handle: u64) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mem_hook_remove_at(target: usize) -> i32 {
     let removed = unsafe { crate::memory::manipulation::hook::remove_at_address(target) };
-    if removed {
-        MEM_OK
-    } else {
-        MEM_ERR_NOT_FOUND
-    }
+    if removed { MEM_OK } else { MEM_ERR_NOT_FOUND }
 }
 
 /// Returns the number of hooks currently managed by the internal registry inside
@@ -354,11 +344,7 @@ pub unsafe extern "C" fn mem_hook_is_hooked(target: usize) -> i32 {
 /// Writes the total number of active hooks to `*count_out` (which may be larger than
 /// `cap` if the buffer was too small).  `count_out` must be non-null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn mem_hook_list(
-    buf: *mut usize,
-    cap: usize,
-    count_out: *mut usize,
-) -> i32 {
+pub unsafe extern "C" fn mem_hook_list(buf: *mut usize, cap: usize, count_out: *mut usize) -> i32 {
     if count_out.is_null() {
         return MEM_ERR_NULL;
     }
@@ -453,8 +439,8 @@ pub unsafe extern "C" fn mem_patch_apply_cave(
         Err(ref e) => return patch_err(e),
     };
     let addr = patch.address();
-    if !address_out.is_null() { 
-        unsafe { *address_out = addr }; 
+    if !address_out.is_null() {
+        unsafe { *address_out = addr };
     }
     PATCH_REGISTRY.lock().insert(addr, patch);
     MEM_OK
@@ -736,13 +722,11 @@ pub unsafe extern "C" fn mem_brk_remove(handle: u64) -> i32 {
 pub unsafe extern "C" fn mem_brk_remove_at(target: usize) -> i32 {
     let mut registry = BRK_REGISTRY.lock();
     // Find the handle whose Breakpoint watches `target`.
-    let handle = match registry.iter().find_map(|(&h, bp)| {
-        if bp.target() == target {
-            Some(h)
-        } else {
-            None
-        }
-    }) {
+    let handle = match registry.iter().find_map(
+        |(&h, bp)| {
+            if bp.target() == target { Some(h) } else { None }
+        },
+    ) {
         Some(h) => h,
         None => return MEM_ERR_NOT_FOUND,
     };
@@ -803,8 +787,7 @@ pub unsafe extern "C" fn mem_shellcode_load(
 
     let code_slice = unsafe { std::slice::from_raw_parts(code, code_len) };
 
-    let mut builder =
-        crate::memory::allocation::shellcode::ShellcodeBuilder::new(code_slice);
+    let mut builder = crate::memory::allocation::shellcode::ShellcodeBuilder::new(code_slice);
 
     if near_address != 0 {
         builder = builder.near_address(near_address);

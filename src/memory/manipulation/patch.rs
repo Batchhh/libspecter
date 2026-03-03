@@ -118,8 +118,9 @@ impl Patch {
 pub fn apply(rva: usize, hex_str: &str) -> Result<Patch, PatchError> {
     let clean: String = hex_str.chars().filter(|c| !c.is_whitespace()).collect();
     let bytes = hex::decode(&clean)?;
-    let image_name = crate::config::get_target_image_name()
-        .ok_or_else(|| crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string()))?;
+    let image_name = crate::config::get_target_image_name().ok_or_else(|| {
+        crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string())
+    })?;
     let base = crate::memory::info::image::get_image_base(&image_name)?;
     let address = base + rva;
 
@@ -176,8 +177,9 @@ where
         .iter()
         .flat_map(|instr| instr.0.to_le_bytes())
         .collect();
-    let image_name = crate::config::get_target_image_name()
-        .ok_or_else(|| crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string()))?;
+    let image_name = crate::config::get_target_image_name().ok_or_else(|| {
+        crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string())
+    })?;
     let base = crate::memory::info::image::get_image_base(&image_name)?;
     let address = base + rva;
 
@@ -239,8 +241,9 @@ where
         .flat_map(|instr| instr.0.to_le_bytes())
         .collect();
 
-    let image_name = crate::config::get_target_image_name()
-        .ok_or_else(|| crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string()))?;
+    let image_name = crate::config::get_target_image_name().ok_or_else(|| {
+        crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string())
+    })?;
     let base = crate::memory::info::image::get_image_base(&image_name)?;
     let address = base + rva;
 
@@ -329,8 +332,9 @@ pub fn apply_in_cave(rva: usize, hex_str: &str) -> Result<Patch, PatchError> {
         return Err(PatchError::EmptyInstructions);
     }
 
-    let image_name = crate::config::get_target_image_name()
-        .ok_or_else(|| crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string()))?;
+    let image_name = crate::config::get_target_image_name().ok_or_else(|| {
+        crate::memory::info::image::ImageError::NotFound("call mem_init first".to_string())
+    })?;
     let base = crate::memory::info::image::get_image_base(&image_name)?;
     let address = base + rva;
 

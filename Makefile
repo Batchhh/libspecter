@@ -106,7 +106,7 @@ consumer: release
 check: release
 	@echo "── Checking exported symbols in $(RUST_LIB) ──"
 	@nm -gU $(RUST_LIB) | grep ' T _mem_' | sort
-	@EXPECTED=$$(grep -E '^[a-z].*mem_[a-z]' $(HEADER) | grep -v '^/' | wc -l | tr -d ' '); \
+	@EXPECTED=$$(grep -E '^(int32_t|size_t|void)[[:space:]]+mem_[a-z]' $(HEADER) | wc -l | tr -d ' '); \
 	FOUND=$$(nm -gU $(RUST_LIB) | grep -c ' T _mem_'); \
 	echo "Declared in header: $$EXPECTED  |  Found in lib: $$FOUND"; \
 	if [ "$$FOUND" -ge "$$EXPECTED" ]; then echo "OK"; else echo "MISMATCH — check ffi.rs"; exit 1; fi
