@@ -25,9 +25,11 @@ make check                            # verify exported symbols match specter.h
 
 ## Docs
 
-[docs/usage.md](docs/usage.md)
+[docs/usage.md](docs/usage.md) — C/C++ API reference and examples
 
-[docs/architecture.md](docs/architecture.md)
+[docs/rust.md](docs/rust.md) — Using the library from Rust via FFI
+
+[docs/architecture.md](docs/architecture.md) — Internal design and data flows
 
 ## Contributing
 
