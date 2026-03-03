@@ -40,6 +40,10 @@ make check                            # verify exported symbols match specter.h
 
 Bug reports and feature requests are welcome via [GitHub Issues](https://github.com/Batchhh/libspecter/issues).
 
+## Legal
+
+This project is intended for **educational and research purposes only**. Use it only on devices and applications you own or have explicit authorization to test. The author is not responsible for any misuse or damage caused by this software.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
