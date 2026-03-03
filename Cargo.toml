@@ -1,7 +1,19 @@
 [package]
-name = "specter"
+name = "specter-mem"
 version = "0.1.0"
 edition = "2024"
+description = "ARM64 memory manipulation framework for iOS/macOS — inline hooking, stealth code patching, hardware breakpoints, and shellcode loading"
+license = "MIT"
+repository = "https://github.com/Batchhh/libspecter"
+readme = "README.md"
+keywords = ["arm64", "ios", "macos", "memory", "hooking"]
+categories = ["development-tools::ffi", "os::macos-apis", "memory-management"]
+documentation = "https://docs.rs/specter-mem"
+exclude = ["target/", "docs/"]
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = ["aarch64-apple-darwin"]
 
 [lib]
 name = "specter"
