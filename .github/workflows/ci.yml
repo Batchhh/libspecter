@@ -120,7 +120,7 @@ jobs:
         run: |
           ARCHIVE="specter-${{ github.ref_name }}-aarch64-apple-ios.tar.gz"
           tar -czf "$ARCHIVE" \
-            -C target/aarch64-apple-ios/release libspecter.a \
+            target/aarch64-apple-ios/release/libspecter.a \
             specter.h \
             Makefile
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
