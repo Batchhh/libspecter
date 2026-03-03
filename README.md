@@ -23,8 +23,8 @@ make check                            # verify exported symbols match specter.h
 
 ## Docs
 
-[docs/usage.md](docs/usage.md) - Full API reference with C and C++ examples |
-[docs/architecture.md](docs/architecture.md) - Internals — hook engine, stealth patching, hardware breakpoints |
+[docs/usage.md](docs/usage.md)
+[docs/architecture.md](docs/architecture.md)
 
 ## Contributing
 
