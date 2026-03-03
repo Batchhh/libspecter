@@ -83,6 +83,54 @@ jobs:
             specter.h
           retention-days: 7
 
+  publish-package:
+    name: Publish GitHub Package
+    needs: [lint, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build libspecter.a
+        run: make
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Push artifacts to GitHub Container Registry
+        run: |
+          echo "${{ github.token }}" | oras login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+
+          oras push "ghcr.io/${{ github.repository }}:${{ github.ref_name }}" \
+            --artifact-type "application/vnd.specter.library.v1" \
+            target/aarch64-apple-ios/release/libspecter.a:application/octet-stream \
+            specter.h:text/plain
+
+          if [[ "${{ github.ref_name }}" != *-* ]]; then
+            oras tag "ghcr.io/${{ github.repository }}:${{ github.ref_name }}" latest
+          fi
+
   release:
     name: Publish Release
     needs: [lint, build]

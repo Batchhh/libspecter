@@ -10,9 +10,9 @@ Provides inline function hooking, stealth code patching, hardware breakpoints, m
 
 ```bash
 rustup target add aarch64-apple-ios   # once
-make                                   # release → target/aarch64-apple-ios/release/libspecter.a
+make                                  # release → target/aarch64-apple-ios/release/libspecter.a
 make debug
-make check                             # verify exported symbols match specter.h
+make check                            # verify exported symbols match specter.h
 ```
 
 ## Integrate
@@ -23,9 +23,8 @@ make check                             # verify exported symbols match specter.h
 
 ## Docs
 
-| | |
-| [docs/usage.md](docs/usage.md) | Full API reference with C and C++ examples |
-| [docs/architecture.md](docs/architecture.md) | Internals — hook engine, stealth patching, hardware breakpoints |
+[docs/usage.md](docs/usage.md) - Full API reference with C and C++ examples |
+[docs/architecture.md](docs/architecture.md) - Internals — hook engine, stealth patching, hardware breakpoints |
 
 ## Contributing
 
