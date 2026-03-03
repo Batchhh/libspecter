@@ -7,10 +7,6 @@ edition = "2024"
 name = "specter"
 crate-type = ["staticlib"]
 
-[[bin]]
-name = "spectre_dev"
-path = "src/main.rs"
-
 [features]
 dev_release = []
 
