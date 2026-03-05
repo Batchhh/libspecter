@@ -1,31 +1,31 @@
 # Makefile — build libspecter.a (Rust static library) for aarch64-apple-ios
-# and optionally compile + link a C/C++ consumer against it.
+# and aarch64-apple-darwin, and optionally compile + link a C/C++ consumer.
 #
 # Usage:
-#   make              — build libspecter.a (release)
-#   make debug        — build libspecter.a (debug)
+#   make              — build libspecter.a for both iOS and macOS (release)
+#   make ios          — build for iOS only
+#   make macos        — build for macOS only
+#   make debug        — build for both (debug)
 #   make clean        — remove build artefacts
 #   make check        — build and run a quick symbol-presence sanity check
 #
 # Consumer targets (set CONSUMER_SRC):
 #   make consumer CONSUMER_SRC=tests/test.c
 #   make consumer CONSUMER_SRC=tests/test.cpp
-#
-# Override any variable on the command line, e.g.:
-#   make CARGO_TARGET=aarch64-apple-macosx14.0
 
 # Rust / Cargo
 CARGO        := cargo
-CARGO_TARGET := aarch64-apple-ios
 RUST_PROFILE := release
-CARGO_FLAGS  := --target $(CARGO_TARGET)
 
-ifeq ($(RUST_PROFILE),release)
-	CARGO_FLAGS += --release
-endif
+IOS_TARGET   := aarch64-apple-ios
+MACOS_TARGET := aarch64-apple-darwin
 
-RUST_LIB_DIR := target/$(CARGO_TARGET)/$(RUST_PROFILE)
-RUST_LIB     := $(RUST_LIB_DIR)/libspecter.a
+IOS_LIB_DIR   := target/$(IOS_TARGET)/$(RUST_PROFILE)
+MACOS_LIB_DIR := target/$(MACOS_TARGET)/$(RUST_PROFILE)
+IOS_LIB       := $(IOS_LIB_DIR)/libspecter.a
+MACOS_LIB     := $(MACOS_LIB_DIR)/libspecter.a
+
+CARGO_FLAGS_RELEASE := --release
 
 # Apple SDK / toolchain
 SDK          := iphoneos
@@ -57,7 +57,7 @@ LDFLAGS := \
 	-arch $(ARCH) \
 	-isysroot $(SYSROOT) \
 	-miphoneos-version-min=$(MIN_IOS) \
-	-L$(RUST_LIB_DIR) \
+	-L$(IOS_LIB_DIR) \
 	-lspectre \
 	-lc++ \
 	-framework Foundation \
@@ -70,24 +70,32 @@ HEADER := specter.h
 CONSUMER_SRC  ?=
 CONSUMER_OUT  ?= build/consumer
 
-.PHONY: all debug release consumer check clean help
+.PHONY: all ios macos debug debug-ios debug-macos release consumer check check-ios check-macos clean help
 
-all: release
+all: ios macos
 
-release:
-	$(CARGO) build $(CARGO_FLAGS)
-	@echo "Built: $(RUST_LIB)"
+release: all
 
-debug: RUST_PROFILE := debug
-debug: CARGO_FLAGS  := --target $(CARGO_TARGET)
-debug: RUST_LIB_DIR := target/$(CARGO_TARGET)/debug
-debug: RUST_LIB     := target/$(CARGO_TARGET)/debug/libspecter.a
-debug:
-	$(CARGO) build --target $(CARGO_TARGET)
-	@echo "Built: target/$(CARGO_TARGET)/debug/libspecter.a"
+ios:
+	$(CARGO) build --target $(IOS_TARGET) $(CARGO_FLAGS_RELEASE)
+	@echo "Built: $(IOS_LIB)"
 
-# Compile + link a C or C++ consumer file
-consumer: release
+macos:
+	$(CARGO) build --target $(MACOS_TARGET) $(CARGO_FLAGS_RELEASE)
+	@echo "Built: $(MACOS_LIB)"
+
+debug: debug-ios debug-macos
+
+debug-ios:
+	$(CARGO) build --target $(IOS_TARGET)
+	@echo "Built: target/$(IOS_TARGET)/debug/libspecter.a"
+
+debug-macos:
+	$(CARGO) build --target $(MACOS_TARGET)
+	@echo "Built: target/$(MACOS_TARGET)/debug/libspecter.a"
+
+# Compile + link a C or C++ consumer file (against iOS build)
+consumer: ios
 	@if [ -z "$(CONSUMER_SRC)" ]; then \
 		echo "Error: set CONSUMER_SRC=path/to/file.{c,cpp}"; exit 1; \
 	fi
@@ -102,14 +110,24 @@ consumer: release
 	$$COMPILER $$CFLAGS_USED $(CONSUMER_SRC) $(LDFLAGS) -o $(CONSUMER_OUT)
 	@echo "Linked: $(CONSUMER_OUT)"
 
-# Sanity check: verify exported symbols are present in the static lib
-check: release
-	@echo "── Checking exported symbols in $(RUST_LIB) ──"
-	@nm -gU $(RUST_LIB) | grep ' T _mem_' | sort
+# Sanity check: verify exported symbols are present in both builds
+check: check-ios check-macos
+
+check-ios: ios
+	@echo "── Checking exported symbols in $(IOS_LIB) ──"
+	@nm -gU $(IOS_LIB) | grep ' T _mem_' | sort
 	@EXPECTED=$$(grep -E '^(int32_t|size_t|void)[[:space:]]+mem_[a-z]' $(HEADER) | wc -l | tr -d ' '); \
-	FOUND=$$(nm -gU $(RUST_LIB) | grep -c ' T _mem_'); \
+	FOUND=$$(nm -gU $(IOS_LIB) | grep -c ' T _mem_'); \
 	echo "Declared in header: $$EXPECTED  |  Found in lib: $$FOUND"; \
-	if [ "$$FOUND" -ge "$$EXPECTED" ]; then echo "OK"; else echo "MISMATCH — check ffi.rs"; exit 1; fi
+	if [ "$$FOUND" -ge "$$EXPECTED" ]; then echo "OK (iOS)"; else echo "MISMATCH — check ffi.rs"; exit 1; fi
+
+check-macos: macos
+	@echo "── Checking exported symbols in $(MACOS_LIB) ──"
+	@nm -gU $(MACOS_LIB) | grep ' T _mem_' | sort
+	@EXPECTED=$$(grep -E '^(int32_t|size_t|void)[[:space:]]+mem_[a-z]' $(HEADER) | wc -l | tr -d ' '); \
+	FOUND=$$(nm -gU $(MACOS_LIB) | grep -c ' T _mem_'); \
+	echo "Declared in header: $$EXPECTED  |  Found in lib: $$FOUND"; \
+	if [ "$$FOUND" -ge "$$EXPECTED" ]; then echo "OK (macOS)"; else echo "MISMATCH — check ffi.rs"; exit 1; fi
 
 clean:
 	$(CARGO) clean
@@ -117,14 +135,15 @@ clean:
 
 help:
 	@echo "Targets:"
-	@echo "  all / release   Build libspecter.a (release)"
-	@echo "  debug           Build libspecter.a (debug)"
+	@echo "  all / release   Build libspecter.a for iOS and macOS (release)"
+	@echo "  ios             Build for aarch64-apple-ios only"
+	@echo "  macos           Build for aarch64-apple-darwin only"
+	@echo "  debug           Build both targets (debug)"
 	@echo "  consumer        Compile + link CONSUMER_SRC against libspecter.a"
-	@echo "  check           Verify exported symbols match memory.h declarations"
+	@echo "  check           Verify exported symbols for both targets"
 	@echo "  clean           Remove all build artefacts"
 	@echo ""
 	@echo "Variables:"
-	@echo "  CARGO_TARGET    Default: aarch64-apple-ios"
 	@echo "  SDK             Default: iphoneos  (use iphonesimulator for Simulator)"
 	@echo "  MIN_IOS         Default: 14.0"
 	@echo "  CONSUMER_SRC    Path to .c/.cpp file for the 'consumer' target"

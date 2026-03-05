@@ -21,7 +21,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-darwin
           components: rustfmt, clippy
 
       - name: Cache cargo registry
@@ -51,7 +51,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-darwin
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -65,21 +65,33 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Type-check (aarch64-apple-ios)
+      - name: Type-check (iOS)
         run: cargo check --target aarch64-apple-ios
 
-      - name: Build libspecter.a
+      - name: Type-check (macOS)
+        run: cargo check --target aarch64-apple-darwin
+
+      - name: Build libspecter.a (iOS + macOS)
         run: make
 
-      - name: Verify exported symbols
+      - name: Verify exported symbols (iOS + macOS)
         run: make check
 
-      - name: Upload library artifact
+      - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libspecter-${{ github.sha }}
+          name: libspecter-ios-${{ github.sha }}
           path: |
             target/aarch64-apple-ios/release/libspecter.a
+            specter.h
+          retention-days: 7
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libspecter-macos-${{ github.sha }}
+          path: |
+            target/aarch64-apple-darwin/release/libspecter.a
             specter.h
           retention-days: 7
 
@@ -97,7 +109,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-darwin
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -111,7 +123,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Build libspecter.a
+      - name: Build libspecter.a (iOS + macOS)
         run: make
 
       - name: Install ORAS
@@ -127,6 +139,7 @@ jobs:
           oras push "ghcr.io/${REPO_LC}:${{ github.ref_name }}" \
             --artifact-type "application/vnd.specter.library.v1" \
             target/aarch64-apple-ios/release/libspecter.a:application/octet-stream \
+            target/aarch64-apple-darwin/release/libspecter.a:application/octet-stream \
             specter.h:text/plain
 
           if [[ "${{ github.ref_name }}" != *-* ]]; then
@@ -146,7 +159,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-darwin
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -160,7 +173,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Build libspecter.a (release)
+      - name: Build libspecter.a (iOS + macOS)
         run: make
 
       - name: Verify exported symbols
@@ -168,12 +181,20 @@ jobs:
 
       - name: Package release artifacts
         run: |
-          ARCHIVE="specter-${{ github.ref_name }}-aarch64-apple-ios.tar.gz"
-          tar -czf "$ARCHIVE" \
-            target/aarch64-apple-ios/release/libspecter.a \
-            specter.h
-          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
-          shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+          IOS_ARCHIVE="specter-${{ github.ref_name }}-aarch64-apple-ios.tar.gz"
+          tar -czf "$IOS_ARCHIVE" \
+            -C target/aarch64-apple-ios/release libspecter.a \
+            -C "$GITHUB_WORKSPACE" specter.h
+          shasum -a 256 "$IOS_ARCHIVE" > "$IOS_ARCHIVE.sha256"
+
+          MACOS_ARCHIVE="specter-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz"
+          tar -czf "$MACOS_ARCHIVE" \
+            -C target/aarch64-apple-darwin/release libspecter.a \
+            -C "$GITHUB_WORKSPACE" specter.h
+          shasum -a 256 "$MACOS_ARCHIVE" > "$MACOS_ARCHIVE.sha256"
+
+          echo "IOS_ARCHIVE=$IOS_ARCHIVE" >> "$GITHUB_ENV"
+          echo "MACOS_ARCHIVE=$MACOS_ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
         env:
@@ -187,5 +208,7 @@ jobs:
             --title "Specter ${{ github.ref_name }}" \
             --generate-notes \
             $PRERELEASE \
-            "${{ env.ARCHIVE }}" \
-            "${{ env.ARCHIVE }}.sha256"
+            "${{ env.IOS_ARCHIVE }}" \
+            "${{ env.IOS_ARCHIVE }}.sha256" \
+            "${{ env.MACOS_ARCHIVE }}" \
+            "${{ env.MACOS_ARCHIVE }}.sha256"

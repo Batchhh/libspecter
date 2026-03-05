@@ -1,39 +1,35 @@
-# Specter — Architecture
+# Architecture
 
-This document explains how the framework is built internally. It is aimed at contributors and advanced users who need to understand what is happening under the hood.
+Internal design documentation for contributors and advanced users.
 
 ---
 
-## Layer model
+## Platforms
+
+Specter builds for both **iOS** (`aarch64-apple-ios`) and **macOS** (`aarch64-apple-darwin`). Both targets share the same codebase — all APIs use Mach kernel and dyld primitives available on both platforms. `make` builds both; `make ios` or `make macos` for a single target.
+
+---
+
+## Layer Model
 
 ```mermaid
-graph TD
-    Consumer["C/C++ consumer<br/>(includes specter.h)"]
-    FFI["src/ffi.rs<br/>─────────────────────────<br/>• Converts C types → Rust<br/>• Maps errors → MEM_ERR_*<br/>• Owns 4 handle registries<br/>  hooks / patches / brk / shellcode"]
-    Hook["hook.rs<br/>Inline hook engine"]
-    Patch["patch.rs<br/>Stealth patching"]
-    RW["rw.rs<br/>Read / Write"]
-    Brk["breakpoint.rs<br/>HW breakpoints"]
-    Shell["shellcode.rs<br/>Executable loader"]
-    Info["info/<br/>image.rs · symbol.rs<br/>code_cave.rs · scan.rs"]
-    Kernel["Mach kernel / dyld / POSIX<br/>─────────────────────────────────────<br/>mach_vm_remap · vm_protect · task_threads<br/>mach_port_* · mach_msg · dlsym · _dyld_*"]
+graph LR
+    CC[C/C++ consumer — specter.h]
+    RC[Rust caller — direct]
+    FFI[src/ffi.rs — stable C ABI · error mapping · 4 registries]
+    Mods[src/memory/ — manipulation · info · platform · allocation]
+    Kern[Mach kernel · dyld · POSIX]
 
-    Consumer -->|"stable C ABI<br/>extern C"| FFI
-    FFI --> Hook
-    FFI --> Patch
-    FFI --> RW
-    FFI --> Brk
-    FFI --> Shell
-    Hook --> Info
-    Patch --> Info
-    Shell --> Info
-    Hook --> Kernel
-    Patch --> Kernel
-    RW --> Kernel
-    Brk --> Kernel
-    Shell --> Kernel
-    Info --> Kernel
+    CC --> FFI
+    FFI --> Mods
+    RC -.->|bypasses FFI| Mods
+    Mods --> Kern
 ```
+
+### Two consumption modes
+
+1. **C/C++ via FFI** — link `libspecter.a`, include `specter.h`. The FFI layer (`src/ffi.rs`) manages handle registries and maps Rust errors to `MEM_ERR_*` codes.
+2. **Rust direct** — use `specter::memory::*` modules directly. No FFI overhead, full access to Rust types (`Hook`, `Patch`, `Breakpoint`, `LoadedShellcode`).
 
 ---
 
@@ -41,52 +37,54 @@ graph TD
 
 ```mermaid
 sequenceDiagram
-    participant C as C/C++ caller
+    participant C as Caller
     participant FFI as ffi.rs
     participant Cfg as config.rs
-    participant Img as image.rs (cache)
+    participant Img as image.rs
     participant dyld
 
     C->>FFI: mem_init("MyApp", &base_out)
     FFI->>Cfg: set_target_image_name("MyApp")
     FFI->>Img: get_image_base("MyApp")
-    Img->>dyld: _dyld_image_count() / _dyld_get_image_name()
+    Img->>dyld: _dyld_image_count / _dyld_get_image_name
     dyld-->>Img: iterate image list
-    Img-->>Img: cache result in DashMap
+    Img-->>Img: cache in RwLock HashMap
     Img-->>FFI: Ok(base_address)
-    FFI-->>C: MEM_OK, *base_out = base_address
+    FFI-->>C: MEM_OK, base_out = base_address
 
-    Note over FFI,Img: All subsequent RVA calls resolve: absolute = base + rva
+    Note over FFI,Img: All subsequent RVA calls resolve absolute = base + rva
 ```
+
+The target image name is stored in a `RwLock<Option<String>>` in `config.rs`. The image cache in `image.rs` uses a `RwLock<HashMap>` for thread-safe lookups.
 
 ---
 
-## Inline hook engine (`src/memory/manipulation/hook.rs`)
+## Inline Hook Engine (`src/memory/manipulation/hook.rs`)
 
 ### Standard hook — full flow
 
 ```mermaid
 flowchart TD
-    Start(["mem_hook_install / install_at_address"])
-    CheckExists{"Hook already<br/>exists at target?"}
-    ErrExists(["return MEM_ERR_EXISTS"])
-    ReadFirst["Read first instruction<br/>at target"]
-    IsThunk{"First instr<br/>is a B thunk?"}
-    AllocNear["alloc_trampoline_near<br/>mmap within ±128 MB"]
-    AllocAny["alloc_trampoline<br/>mmap anywhere"]
-    Suspend["Suspend all other threads<br/>thread_suspend × N"]
-    Relocate["Relocate 4 instructions (16 bytes)<br/>to trampoline — fix PC-relative refs"]
-    RelocOK{"All 4 instrs<br/>relocated?"}
-    ErrReloc(["MEM_ERR_RELOC<br/>free trampoline + resume"])
-    AppendReturn["Append absolute branch<br/>back to target+16"]
-    Protect["mprotect trampoline RX"]
-    FlushCache["Flush caches<br/>dc cvau · dsb ish · ic ivau · dsb ish · isb"]
-    WriteHook["Write 16-byte polymorphic branch<br/>at target via stealth_write"]
-    WriteOK{"Write<br/>succeeded?"}
-    ErrPatch(["MEM_ERR_PATCH<br/>free trampoline + resume"])
-    RegisterCRC["Register CRC checksum<br/>for tamper detection"]
-    Resume["Resume all threads"]
-    Done(["return MEM_OK<br/>trampoline addr + handle"])
+    Start([install / install_at_address])
+    CheckExists{Hook exists at target?}
+    ErrExists([HookError::AlreadyExists])
+    ReadFirst[Read first instruction at target]
+    IsThunk{First instr is a B thunk?}
+    AllocNear[alloc_trampoline_near — mmap within ±128 MB]
+    AllocAny[alloc_trampoline — mmap anywhere]
+    Suspend[Suspend all other threads]
+    Relocate[Relocate 4 instructions to trampoline]
+    RelocOK{All 4 instrs relocated?}
+    ErrReloc([RelocationFailed — free + resume])
+    AppendReturn[Append obfuscated branch back to target+16]
+    Protect[mprotect trampoline RX]
+    FlushCache[Flush caches — dc cvau, dsb ish, ic ivau, dsb ish, isb]
+    WriteHook[Write 16-byte polymorphic branch via stealth_write]
+    WriteOK{Write succeeded?}
+    ErrPatch([PatchFailed — free + resume])
+    RegisterCRC[Register FNV-1a checksum for tamper detection]
+    Resume[Resume all threads]
+    Done([return Hook with target + trampoline])
 
     Start --> CheckExists
     CheckExists -->|yes| ErrExists
@@ -110,28 +108,30 @@ flowchart TD
     Resume --> Done
 ```
 
-### Instruction relocation logic
+### Instruction relocation
+
+The trampoline must contain the 4 original instructions relocated to a new address. PC-relative instructions need fixup:
 
 ```mermaid
 flowchart TD
-    Instr["ARM64 instruction at PC"]
+    Instr[ARM64 instruction at PC]
 
-    IsADR{"ADR / ADRP?"}
-    EmitADR["LDR Xd, #8 · B +12 · .quad abs_target<br/>→ 16 bytes"]
+    IsADR{ADR / ADRP?}
+    EmitADR[LDR Xd, #8 + B +12 + .quad abs_target — 16 bytes]
 
-    IsLDRLit{"LDR literal<br/>W / X / SW?"}
-    EmitLDR["LDR X17, #12 · LDR Xd, X17 · B +12 · .quad abs_addr<br/>→ 20 bytes"]
+    IsLDRLit{LDR literal W/X/SW?}
+    EmitLDR[LDR X17 + LDR Xd from X17 + B +12 + .quad — 20 bytes]
 
-    IsBL{"BL?"}
-    EmitBL["ADR X30, #16 + absolute BR to resolved target<br/>→ 20 bytes"]
+    IsBL{BL?}
+    EmitBL[ADR X30, #16 + absolute BR — 20 bytes]
 
-    IsB{"B?"}
-    EmitB["Absolute BR to resolved target<br/>→ 16 bytes"]
+    IsB{B?}
+    EmitB[Absolute BR to resolved target — 16 bytes]
 
-    IsCond{"B.cond / CBZ<br/>CBNZ / TBZ / TBNZ?"}
-    EmitCond["Invert condition (skip 2) · LDR X2, abs_target · BR X2<br/>→ 20 bytes"]
+    IsCond{B.cond / CBZ / CBNZ / TBZ / TBNZ?}
+    EmitCond[Invert cond + LDR X2 + BR X2 — 20 bytes]
 
-    Default["Copy verbatim<br/>→ 4 bytes"]
+    Default[Copy verbatim — 4 bytes]
 
     Instr --> IsADR
     IsADR -->|yes| EmitADR
@@ -148,35 +148,37 @@ flowchart TD
 
 ### Polymorphic branch encoding
 
-Each hook redirect is randomly varied on every install using `arc4random()` — two hooks to the same address installed at different times will produce different bytes.
+Each hook redirect is randomly varied on every install using `arc4random()` — two hooks to the same address will produce different bytes.
 
 ```mermaid
 flowchart LR
-    arc4random -->|"bit 16 == 0"| VariantA
-    arc4random -->|"bit 16 == 1"| VariantB
-    arc4random -->|"reg = rand % 9"| Reg["scratch reg<br/>x9 – x17"]
+    arc4random -->|bit 16 == 0| VariantA
+    arc4random -->|bit 16 == 1| VariantB
+    arc4random -->|reg = rand mod 9| Reg[scratch reg x9–x17]
 
-    VariantA["Variant A — literal pool<br/>────────────────────────<br/>LDR Xn, #8<br/>BR  Xn<br/>.quad dest<br/>(16 bytes)"]
-    VariantB["Variant B — immediate moves<br/>────────────────────────<br/>MOVZ Xn, dest[15:0]<br/>MOVK Xn, dest[31:16], lsl 16<br/>MOVK Xn, dest[47:32], lsl 32<br/>BR   Xn<br/>(16 bytes)"]
+    VariantA[Variant A: LDR Xn, #8 / BR Xn / .quad dest — 16 bytes]
+    VariantB[Variant B: MOVZ + MOVK x3 + BR Xn — 16 bytes]
 
     Reg --> VariantA
     Reg --> VariantB
 ```
 
+Obfuscated branches (used in trampolines) prepend a random junk sled (1–4 NOP/self-move instructions) and optionally an opaque predicate before the actual branch.
+
 ### Code-cave hook
 
 ```mermaid
 flowchart TD
-    Start(["mem_hook_install_cave"])
-    ScanNOP["code_cave.rs: scan __TEXT<br/>for NOP run ≥ 256 bytes<br/>within ±128 MB of target"]
-    Found{"Cave<br/>found?"}
-    ErrAlloc(["MEM_ERR_ALLOC"])
-    Suspend["Suspend all threads"]
-    Relocate["Relocate 4 instrs into<br/>temp buffer"]
-    CaveWrite["stealth_write:<br/>relocated instrs + return branch<br/>→ into NOP region inside __TEXT"]
-    TargetWrite["stealth_write:<br/>16-byte branch at target<br/>→ jumps into cave"]
-    Resume["Resume threads"]
-    Done(["return MEM_OK<br/>trampoline = cave addr"])
+    Start([install_in_cave])
+    ScanNOP[Scan __TEXT for NOP run >= 256 bytes within ±128 MB]
+    Found{Cave found?}
+    ErrAlloc([HookError::AllocationFailed])
+    Suspend[Suspend all threads]
+    Relocate[Relocate 4 instrs into temp buffer]
+    CaveWrite[stealth_write relocated instrs + return branch into cave]
+    TargetWrite[stealth_write 16-byte branch at target]
+    Resume[Resume threads]
+    Done([return Hook — trampoline = cave addr])
 
     Start --> ScanNOP
     ScanNOP --> Found
@@ -189,87 +191,97 @@ flowchart TD
     Resume --> Done
 ```
 
-> The trampoline lives **inside the image's own `__TEXT` segment**, invisible to scanners that enumerate anonymous `mmap` pages.
+> The trampoline lives **inside the image's own `__TEXT` segment**, invisible to scanners that look for anonymous `mmap` pages.
 
 ---
 
-## Stealth patching (`src/memory/manipulation/patch.rs`)
+## Integrity Monitor (`src/memory/manipulation/checksum.rs`)
 
-The standard `vm_protect(RW) → write → vm_protect(RX)` sequence is observable by security frameworks that monitor permission changes on executable pages. Specter avoids it entirely.
+A background thread periodically verifies that installed hooks haven't been tampered with.
+
+```mermaid
+flowchart TD
+    Install[Hook installed] --> Register[Register FNV-1a hash of hook bytes]
+    Register --> FirstHook{First hook registered?}
+    FirstHook -->|yes| StartMonitor[Start background thread — 5s interval]
+    FirstHook -->|no| Done[Done]
+    StartMonitor --> Loop[Sleep then verify_all]
+    Loop --> Tampered{Any hooks tampered?}
+    Tampered -->|no| Loop
+    Tampered -->|yes| Callback[restore_hook_bytes + update checksum]
+    Callback --> Loop
+```
+
+The monitor uses FNV-1a hashing (fast, non-cryptographic) to compare current bytes against the expected state. On tamper detection, it automatically re-writes the hook redirect bytes via `restore_hook_bytes`.
+
+---
+
+## Stealth Patching (`src/memory/manipulation/patch.rs`)
+
+The standard `vm_protect(RW) → write → vm_protect(RX)` sequence is observable by security frameworks. Specter avoids it.
 
 ### mach_vm_remap write path
 
 ```mermaid
-sequenceDiagram
-    participant Caller
-    participant stealth_write
-    participant Mach as Mach kernel
-    participant CodePage as "__TEXT page (RX, unchanged)"
-    participant Alias as "Alias page (fresh VA)"
+flowchart TD
+    S1([stealth_write addr + bytes])
+    S2[mach_vm_remap — alias VA created, both VAs share the same physical frames]
+    S3[mach_vm_protect alias RW — __TEXT stays RX, no observable change]
+    S4[memcpy through alias — write instantly visible in __TEXT via shared frames]
+    S5[mach_vm_deallocate — alias VA gone, __TEXT unaffected]
+    S6[icache flush — dc cvau · dsb ish · ic ivau · dsb ish · isb]
+    S7([return Ok])
 
-    Caller->>stealth_write: stealth_write(address, bytes)
-
-    stealth_write->>Mach: mach_vm_remap(task, &alias_va, page_len, task, page_start, share=false)
-    Mach-->>stealth_write: KERN_SUCCESS, alias_va
-    Note over CodePage,Alias: Kernel maps both VAs to the same physical frames
-
-    stealth_write->>Mach: mach_vm_protect(task, alias_va, RW)
-    Note over CodePage: __TEXT stays RX — no observable vm_protect on code
-
-    stealth_write->>Alias: memcpy(alias_va + offset, bytes, len)
-    Note over CodePage: Write appears in __TEXT because pages share physical memory
-
-    stealth_write->>Mach: mach_vm_deallocate(task, alias_va, page_len)
-    Note over Alias: Alias torn down immediately
-
-    stealth_write->>stealth_write: dc cvau + dsb ish + ic ivau + dsb ish + isb
-    Note over stealth_write: Cache flush on ORIGINAL address
-
-    stealth_write-->>Caller: Ok(())
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
 ```
 
-### Full patch lifecycle
+### Patch lifecycle
 
 ```mermaid
 flowchart TD
-    ApplyFn(["mem_patch_apply(rva, hex_str)"])
-    ParseHex["Parse hex string<br/>strip whitespace · hex::decode"]
-    ResolveBase["Resolve image base<br/>address = base + rva"]
-    Suspend["Suspend all threads"]
-    SaveOrig["Read original bytes<br/>saved in Patch struct"]
-    StealthWrite["stealth_write<br/>via mach_vm_remap alias"]
-    Verify{"Re-read bytes<br/>match expected?"}
-    ErrVerify(["MEM_ERR_PATCH + resume threads"])
-    Resume["Resume threads"]
-    StoreReg["Store Patch in PATCH_REGISTRY<br/>keyed by address"]
-    Done(["return MEM_OK + address_out"])
+    ApplyFn([patch::apply(rva, hex_str)])
+    ParseHex[Parse hex string — strip whitespace, hex decode]
+    ResolveBase[Resolve image base — address = base + rva]
+    Suspend[Suspend all threads]
+    SaveOrig[Read and save original bytes]
+    StealthWrite[stealth_write via mach_vm_remap alias]
+    Verify{Re-read bytes match expected?}
+    ErrVerify([VerificationFailed + resume])
+    Resume[Resume threads]
+    Done([return Patch with address + original_bytes])
 
-    Revert(["mem_patch_revert(address)"])
-    LookupReg{"Address in<br/>PATCH_REGISTRY?"}
-    ErrNotFound(["MEM_ERR_NOT_FOUND"])
-    SuspendR["Suspend all threads"]
-    RestoreOrig["stealth_write original bytes"]
-    ResumeR["Resume threads"]
-    FreeReg["Remove from registry"]
+    Revert([patch.revert])
+    SuspendR[Suspend all threads]
+    RestoreOrig[stealth_write original bytes]
+    FreeCave[Free code cave if any]
+    ResumeR[Resume threads]
 
     ApplyFn --> ParseHex --> ResolveBase --> Suspend --> SaveOrig
     SaveOrig --> StealthWrite --> Verify
     Verify -->|no| ErrVerify
-    Verify -->|yes| Resume --> StoreReg --> Done
+    Verify -->|yes| Resume --> Done
 
-    Revert --> LookupReg
-    LookupReg -->|no| ErrNotFound
-    LookupReg -->|yes| SuspendR --> RestoreOrig --> ResumeR --> FreeReg
+    Revert --> SuspendR --> RestoreOrig --> FreeCave --> ResumeR
 ```
 
-### Fallback path (when remap is unavailable)
+### Assembly patches
+
+`patch::apply_asm` and `patch::apply_asm_in_cave` accept a closure that builds ARM64 instructions using the `jit-assembler` crate:
+
+```
+patch::apply_asm(rva, |asm| asm.nop().ret())
+```
+
+The builder generates `Vec<u32>` instructions which are serialized to bytes and written through the same stealth path.
+
+### Fallback path
 
 ```mermaid
 flowchart LR
-    Try["mach_vm_remap"]
-    OK{"KERN_SUCCESS<br/>+ max_prot has W?"}
-    Remap["Write via alias<br/>(preferred — stealthy)"]
-    Fallback["fallback_write:<br/>vm_protect page RW+COPY<br/>memcpy<br/>vm_protect page back to RX<br/>icache flush"]
+    Try[mach_vm_remap]
+    OK{KERN_SUCCESS and max_prot has W?}
+    Remap[Write via alias — stealthy]
+    Fallback[fallback_write: vm_protect RW+COPY, memcpy, restore RX, icache flush]
 
     Try --> OK
     OK -->|yes| Remap
@@ -278,69 +290,109 @@ flowchart LR
 
 ---
 
-## Hardware breakpoints (`src/memory/platform/breakpoint.rs`)
-
-```mermaid
-sequenceDiagram
-    participant C as C/C++ caller
-    participant FFI as ffi.rs
-    participant BM as HookManager
-    participant Mach as Mach kernel
-    participant CPU as ARM64 CPU
-    participant EHT as exception_handler_thread
-
-    Note over BM,EHT: One-time initialization (first mem_brk_install call)
-    FFI->>Mach: task_get_exception_ports — save existing EXC_BREAKPOINT handler
-    FFI->>Mach: mach_port_allocate — create receive port
-    FFI->>Mach: task_set_exception_ports(EXC_MASK_BREAKPOINT, port, EXCEPTION_STATE)
-    FFI->>EHT: pthread_create — start exception loop
-
-    Note over C,CPU: Installing a breakpoint
-    C->>FFI: mem_brk_install(rva, replacement, &handle)
-    FFI->>BM: add_hook(target, replacement)
-    FFI->>Mach: task_set_state(ARM_DEBUG_STATE64) BVR[n]=target, BCR[n]=0x1E5
-    FFI->>Mach: thread_set_state × all running threads
-    FFI-->>C: MEM_OK, handle
-
-    Note over CPU,EHT: Runtime — execution reaches target
-    CPU->>Mach: hardware debug exception (EXC_BREAKPOINT)
-    Mach->>EHT: mach_msg id=2406 with ARM_THREAD_STATE64 (PC = target)
-    EHT->>BM: find_hook(PC) → replacement
-    EHT->>Mach: mach_msg reply — new_state.PC = replacement
-    Mach->>CPU: resume with modified PC
-    CPU->>CPU: executes replacement function
-```
-
-### Breakpoint slot management
-
-```mermaid
-flowchart LR
-    sysctl["sysctlbyname<br/>hw.optional.breakpoint"] --> hw_count["hw_breakpoints<br/>(typically 6)"]
-    install["mem_brk_install_at<br/>(target, replacement)"] --> check{"active_count<br/>>= hw_count?"}
-    check -->|yes| err(["MEM_ERR_HW_LIMIT"])
-    check -->|no| slot["add_hook to<br/>HookManager slot array"]
-    slot --> dbg["apply_debug_state:<br/>BVR[n] = target<br/>BCR[n] = 0x1E5<br/>on task + all threads"]
-```
-
----
-
-## Read / Write (`src/memory/manipulation/rw.rs`)
+## Hardware Breakpoints (`src/memory/platform/breakpoint.rs`)
 
 ```mermaid
 flowchart TD
-    subgraph DataPages["Data pages — readable / writable"]
-        MemRead["mem_read(addr, out, size)<br/>─────────────────────────<br/>ptr::copy_nonoverlapping<br/>addr → out"]
-        MemWrite["mem_write(addr, value, size)<br/>─────────────────────────<br/>ptr::copy_nonoverlapping<br/>value → addr"]
-        MemReadRVA["mem_read_rva(rva, out, size)<br/>─────────────────────────<br/>addr = get_image_base() + rva<br/>mem_read(addr, ...)"]
-        MemWriteRVA["mem_write_rva(rva, value, size)<br/>─────────────────────────<br/>addr = get_image_base() + rva<br/>mem_write(addr, ...)"]
+    subgraph arch[Exception routing topology]
+        direction LR
+        cpu[ARM64 CPU — debug registers]
+        mach[Mach kernel]
+        eport[(exception port)]
+        eht[exception_handler_thread]
+        cpu -- EXC_BREAKPOINT --> mach
+        mach -- mach_msg --> eport
+        eport -- deliver --> eht
+        eht -- reply new PC --> mach
+        mach -- resume --> cpu
     end
 
-    subgraph CodePages["Code pages — executable"]
-        MemWriteBytes["mem_write_bytes(addr, data, len)<br/>─────────────────────────<br/>stealth_write via mach_vm_remap<br/>+ icache flush"]
+    S1([first breakpoint_install call])
+    S2[task_get_exception_ports — save existing handler]
+    S3[mach_port_allocate + task_set_exception_ports EXC_MASK_BREAKPOINT]
+    S4[pthread_create — start exception_handler_thread]
+    S5[task_set_state + thread_set_state ARM_DEBUG_STATE64]
+    S6([breakpoint armed])
+
+    R1([execution reaches target address])
+    R2[CPU raises EXC_BREAKPOINT — Mach routes to exception port]
+    R3[find_hook PC returns replacement address]
+    R4[mach_msg reply with new_state.PC = replacement]
+    R5([CPU resumes at replacement])
+
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6
+    R1 --> R2 --> R3 --> R4 --> R5
+
+    S3 -.->|registers| eport
+    S4 -.->|listens on| eport
+    S5 -.->|arms| cpu
+    R2 -.->|routed via| eport
+    R3 -.->|handled by| eht
+```
+
+### Slot management
+
+```mermaid
+flowchart LR
+    sysctl[sysctlbyname hw.optional.breakpoint] --> hw_count[hw_breakpoints — typically 6]
+    install[breakpoint::install_at_address] --> check{active_count >= hw_count?}
+    check -->|yes| err([ExceedsHwBreakpoints])
+    check -->|no| slot[add_hook to slot array — max 16 entries, 6 armed]
+    slot --> dbg[apply_debug_state on task + all threads]
+```
+
+### Calling the original
+
+`Breakpoint::call_original` temporarily clears debug registers on the current thread (`suspend_self`), calls the original function, then re-arms them (`resume_self`). This avoids infinite recursion.
+
+---
+
+## Code Cave Finder (`src/memory/info/code_cave.rs`)
+
+Scans the target image for reusable NOP regions and zero-byte alignment padding.
+
+```mermaid
+flowchart TD
+    Request[allocate_cave_near(target, size)]
+    GetImage[get_target_image_name]
+    Scan[find_caves_in_image — scan 32 MB from base]
+
+    subgraph ScanTypes[Two scan types]
+        NOP[find_nop_sequences — runs of 0x1F2003D5]
+        Padding[find_alignment_padding — runs of 0x00 bytes]
     end
 
-    subgraph Chain["Pointer chain"]
-        MemChain["mem_read_pointer_chain<br/>(base, offsets, count, &result)<br/>─────────────────────────<br/>cur = base<br/>for each offset:<br/>  cur = *(cur + offset)<br/>result = cur"]
+    Scan --> NOP & Padding
+    NOP & Padding --> Merge[Merge and sort by address]
+    Merge --> Filter{Within ±128 MB and size >= requested?}
+    Filter -->|yes| Register[Mark allocated in CaveRegistry]
+    Filter -->|no| Next[Try next cave]
+    Next --> Filter
+    Register --> Done([return CodeCave])
+```
+
+The `CaveRegistry` (`Mutex<HashMap<usize, CodeCave>>`) tracks allocated caves to prevent double allocation. Caves are freed when hooks/patches are reverted.
+
+---
+
+## Memory Read / Write (`src/memory/manipulation/rw.rs`)
+
+```mermaid
+flowchart TD
+    subgraph DataPages[Data pages — readable / writable]
+        MemRead[read T — ptr::read]
+        MemWrite[write T — ptr::write]
+        MemReadRVA[read_at_rva T — addr = base + rva]
+        MemWriteRVA[write_at_rva T — addr = base + rva]
+    end
+
+    subgraph CodePages[Code pages — executable]
+        WriteCode[write_code T — stealth_write + icache flush]
+        WriteBytes[write_bytes — suspend, stealth_write, icache flush, resume]
+    end
+
+    subgraph Chain[Pointer chain]
+        MemChain[read_pointer_chain — deref each offset, add last]
     end
 ```
 
@@ -348,31 +400,58 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    base["base<br/>0x100200000"]
-    deref1["*(base + 0x10)<br/>→ ptr_A"]
-    deref2["*(ptr_A + 0x28)<br/>→ ptr_B"]
-    deref3["*(ptr_B + 0x08)<br/>→ 0xDEADBEEF"]
-    result["result_out<br/>= 0xDEADBEEF"]
+    base[base 0x100200000]
+    deref1[deref base + 0x10 = ptr_A]
+    deref2[deref ptr_A + 0x28 = ptr_B]
+    final[ptr_B + 0x08 = result]
 
-    base -->|"+ 0x10, deref"| deref1
-    deref1 -->|"+ 0x28, deref"| deref2
-    deref2 -->|"+ 0x08, deref"| deref3
-    deref3 --> result
+    base -->|+0x10 deref| deref1
+    deref1 -->|+0x28 deref| deref2
+    deref2 -->|+0x08 last, no deref| final
 ```
 
 ---
 
-## Symbol resolution (`src/memory/info/symbol.rs`)
+## Pattern Scanning (`src/memory/info/scan.rs`)
+
+```mermaid
+flowchart TD
+    IDA[scan_ida_pattern]
+    Parse[parse_ida_pattern — bytes + mask]
+    ScanFn[scan_pattern]
+    Check[is_readable_memory]
+    Loop[Linear scan — compare byte-by-byte, skip wildcards]
+    Results[Vec of match addresses]
+
+    ImageScan[scan_image]
+    GetSections[get_image_sections via mach_vm_region]
+    ScanEach[scan_pattern per section]
+
+    CachedScan[scan_pattern_cached]
+    CacheCheck{In SCAN_CACHE?}
+    Hit[Return cached results]
+    Miss[scan then store in cache]
+
+    IDA --> Parse --> ScanFn --> Check --> Loop --> Results
+    ImageScan --> GetSections --> ScanEach --> Results
+    CachedScan --> CacheCheck
+    CacheCheck -->|yes| Hit
+    CacheCheck -->|no| Miss
+```
+
+---
+
+## Symbol Resolution (`src/memory/info/symbol.rs`)
 
 ```mermaid
 flowchart LR
-    Call["mem_resolve_symbol(name)"]
-    Cache{"In DashMap<br/>cache?"}
-    Hit["return cached address"]
-    dlsym["dlsym(RTLD_DEFAULT, name)"]
-    Found{"result<br/>non-NULL?"}
-    Store["store in cache<br/>return address"]
-    Err(["MEM_ERR_SYMBOL"])
+    Call[resolve_symbol]
+    Cache{In DashMap cache?}
+    Hit[return cached address]
+    dlsym[dlsym RTLD_DEFAULT]
+    Found{non-NULL?}
+    Store[store in cache, return address]
+    Err([SymbolError::NotFound])
 
     Call --> Cache
     Cache -->|yes| Hit
@@ -384,28 +463,131 @@ flowchart LR
 
 ---
 
-## Concurrency model
+## Shellcode Loader (`src/memory/allocation/shellcode.rs`)
 
 ```mermaid
 flowchart TD
-    subgraph Registries["Global registries — parking_lot::Mutex"]
-        HR["HOOK_REGISTRY<br/>Mutex&lt;HashMap&lt;u64, Hook&gt;&gt;"]
-        PR["PATCH_REGISTRY<br/>Mutex&lt;HashMap&lt;usize, Patch&gt;&gt;"]
-        BR["BRK_REGISTRY<br/>Mutex&lt;HashMap&lt;u64, Breakpoint&gt;&gt;"]
-        SR["SHELLCODE_REGISTRY<br/>Mutex&lt;HashMap&lt;usize, LoadedShellcode&gt;&gt;"]
-    end
+    Builder[ShellcodeBuilder::new(bytes)]
+    Config[Configure: .with_symbol, .near_address, .no_auto_free]
+    Load[builder.load]
 
-    subgraph Caches["Image & symbol caches — DashMap (lock-free per shard)"]
-        IC["image cache<br/>DashMap&lt;String, usize&gt;"]
-        SC["symbol cache<br/>DashMap&lt;String, usize&gt;"]
-    end
+    Alloc{near_address set?}
+    AllocNear[allocate_cave_near]
+    AllocAny[allocate_cave]
 
-    subgraph PatchWindow["Thread-safe patch window (hooks + patches)"]
-        direction LR
-        S["Suspend all<br/>other threads"] --> W["stealth_write<br/>+ icache flush"] --> R["Resume all<br/>threads"]
-    end
+    Align[4-byte align cave address]
+    Relocate[Resolve symbols via dlsym, write 64-bit addrs at offsets]
+    Write[rw::write_bytes via stealth_write]
+    Verify[Byte-by-byte verify]
+    CheckExec[protection::is_executable]
+    Flush[invalidate_icache]
+    Done([LoadedShellcode — address + size])
 
-    HR & PR --> PatchWindow
+    Builder --> Config --> Load --> Alloc
+    Alloc -->|yes| AllocNear
+    Alloc -->|no| AllocAny
+    AllocNear --> Align
+    AllocAny --> Align
+    Align --> Relocate --> Write --> Verify --> CheckExec --> Flush --> Done
 ```
 
-> All hook and patch operations bracket the write inside a Mach thread-suspension window. This eliminates any race where another thread could execute partially-written hook bytes or observe an inconsistent instruction stream.
+`LoadedShellcode` supports:
+- `execute()` — call as `extern "C" fn() -> usize`
+- `execute_as(|f| f(...))` — call with custom signature
+- `as_function::<F>()` — get a raw function pointer
+- Auto-cleanup on drop (unless `.no_auto_free()` was used)
+
+---
+
+## Thread Safety (`src/memory/platform/thread.rs`)
+
+All hook and patch operations bracket the write inside a Mach thread-suspension window:
+
+```mermaid
+flowchart LR
+    S[suspend_other_threads]
+    W[stealth_write + icache flush]
+    R[resume_threads]
+
+    S --> W --> R
+```
+
+---
+
+## Concurrency Model
+
+```mermaid
+flowchart TD
+    subgraph FFI[FFI registries — Mutex]
+        HR[HOOK_REGISTRY]
+        PR[PATCH_REGISTRY]
+        BR[BRK_REGISTRY]
+        SR[SHELLCODE_REGISTRY]
+    end
+
+    subgraph Internal[Internal registries — Mutex]
+        HookReg[hook::REGISTRY]
+        CaveReg[code_cave::REGISTRY]
+        CRCReg[checksum::CHECKSUMS]
+        ScanCache[scan::SCAN_CACHE]
+    end
+
+    subgraph LockFree[Lock-free — DashMap]
+        SC[symbol::CACHE]
+    end
+
+    subgraph RWL[RwLock]
+        IC[image::IMAGE_CACHE]
+        TC[config::TARGET_IMAGE_NAME]
+    end
+
+    subgraph PatchWindow[Thread-safe patch window]
+        direction LR
+        Susp[Suspend other threads] --> Write[stealth_write + icache flush] --> Res[Resume threads]
+    end
+
+    HookReg & CaveReg --> PatchWindow
+```
+
+> All hook and patch operations bracket the write inside a Mach thread-suspension window. This eliminates races where another thread could execute partially-written hook bytes.
+
+### Lock hierarchy
+
+To prevent deadlocks, locks are always acquired in this order when multiple are needed:
+1. Thread suspension (outermost)
+2. FFI registries
+3. Internal registries (hook, cave, checksum)
+4. Caches (symbol, image, scan)
+
+---
+
+## Memory Protection (`src/memory/info/protection.rs`)
+
+Wraps `mach_vm_region` and `mach_vm_protect` with a typed `PageProtection` abstraction.
+
+| Function | Description |
+|----------|-------------|
+| `get_protection(addr)` | Query current RWX flags |
+| `get_region_info(addr)` | Full region metadata (address, size, protection) |
+| `find_region(addr)` | Find region containing or following address |
+| `protect(addr, size, prot)` | Change protection flags |
+| `is_readable/writable/executable(addr)` | Quick boolean checks |
+| `get_all_regions()` | Enumerate all readable regions in the process |
+
+Used internally by the scan engine (to verify readability before scanning), the code cave finder, and the fallback write path.
+
+---
+
+## Build Artifacts
+
+```
+target/
+├── aarch64-apple-ios/
+│   └── release/
+│       └── libspecter.a          ← iOS static library
+└── aarch64-apple-darwin/
+    └── release/
+        └── libspecter.a          ← macOS static library
+
+specter.h                         ← C/C++ header (shared by both)
+```

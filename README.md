@@ -1,6 +1,7 @@
 # Specter
 
 [![CI](https://github.com/Batchhh/libspecter/actions/workflows/ci.yml/badge.svg)](https://github.com/Batchhh/libspecter/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/specter-mem.svg)](https://crates.io/crates/specter-mem)
 
 
 ARM64 memory manipulation framework for iOS/macOS. Compiled as a static library (`libspecter.a`) consumed via a plain C/C++ header (`specter.h`).
@@ -9,10 +10,14 @@ Provides inline function hooking, stealth code patching, hardware breakpoints, m
 
 ## Build
 
+The release targets **iOS** (`aarch64-apple-ios`) and **macOS** (`aarch64-apple-darwin`).
+
 ```bash
 rustup target add aarch64-apple-ios   # once
-make                                  # release → target/aarch64-apple-ios/release/libspecter.a
-make debug
+make                                  # builds both iOS and macOS (release)
+make ios                              # iOS only
+make macos                            # macOS only
+make debug                            # both targets (debug)
 make check                            # verify exported symbols match specter.h
 ```
 
@@ -25,6 +30,8 @@ make check                            # verify exported symbols match specter.h
 ## Docs
 
 [docs/usage.md](docs/usage.md) — C/C++ API reference and examples
+
+[docs/rust.md](docs/rust.md) — Rust API reference and examples
 
 [docs/architecture.md](docs/architecture.md) — Internal design and data flows
 
