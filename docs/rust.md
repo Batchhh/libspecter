@@ -4,7 +4,7 @@ Specter can be used directly as a Rust crate without going through the C FFI lay
 
 ```toml
 [dependencies]
-specter-mem = "1.0"
+specter-mem = "1.0.2"
 ```
 
 > **Platform note:** The crate builds for both iOS (`aarch64-apple-ios`) and macOS (`aarch64-apple-darwin`). Use `make ios` or `make macos` to build a single target.
