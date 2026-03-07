@@ -239,18 +239,18 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    ApplyFn([patch::apply(rva, hex_str)])
+    ApplyFn(["patch::apply(rva, hex_str)"])
     ParseHex[Parse hex string — strip whitespace, hex decode]
     ResolveBase[Resolve image base — address = base + rva]
     Suspend[Suspend all threads]
     SaveOrig[Read and save original bytes]
     StealthWrite[stealth_write via mach_vm_remap alias]
     Verify{Re-read bytes match expected?}
-    ErrVerify([VerificationFailed + resume])
+    ErrVerify(["VerificationFailed + resume"])
     Resume[Resume threads]
-    Done([return Patch with address + original_bytes])
+    Done(["return Patch with address + original_bytes"])
 
-    Revert([patch.revert])
+    Revert(["patch.revert"])
     SuspendR[Suspend all threads]
     RestoreOrig[stealth_write original bytes]
     FreeCave[Free code cave if any]
@@ -353,13 +353,13 @@ Scans the target image for reusable NOP regions and zero-byte alignment padding.
 
 ```mermaid
 flowchart TD
-    Request[allocate_cave_near(target, size)]
+    Request["allocate_cave_near(target, size)"]
     GetImage[get_target_image_name]
-    Scan[find_caves_in_image — scan 32 MB from base]
+    Scan["find_caves_in_image — scan 32 MB from base"]
 
     subgraph ScanTypes[Two scan types]
-        NOP[find_nop_sequences — runs of 0x1F2003D5]
-        Padding[find_alignment_padding — runs of 0x00 bytes]
+        NOP["find_nop_sequences — runs of 0x1F2003D5"]
+        Padding["find_alignment_padding — runs of 0x00 bytes"]
     end
 
     Scan --> NOP & Padding
@@ -368,7 +368,7 @@ flowchart TD
     Filter -->|yes| Register[Mark allocated in CaveRegistry]
     Filter -->|no| Next[Try next cave]
     Next --> Filter
-    Register --> Done([return CodeCave])
+    Register --> Done(["return CodeCave"])
 ```
 
 The `CaveRegistry` (`Mutex<HashMap<usize, CodeCave>>`) tracks allocated caves to prevent double allocation. Caves are freed when hooks/patches are reverted.
@@ -467,8 +467,8 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    Builder[ShellcodeBuilder::new(bytes)]
-    Config[Configure: .with_symbol, .near_address, .no_auto_free]
+    Builder["ShellcodeBuilder::new(bytes)"]
+    Config["Configure: .with_symbol, .near_address, .no_auto_free"]
     Load[builder.load]
 
     Alloc{near_address set?}
@@ -476,12 +476,12 @@ flowchart TD
     AllocAny[allocate_cave]
 
     Align[4-byte align cave address]
-    Relocate[Resolve symbols via dlsym, write 64-bit addrs at offsets]
-    Write[rw::write_bytes via stealth_write]
+    Relocate["Resolve symbols via dlsym, write 64-bit addrs at offsets"]
+    Write["rw::write_bytes via stealth_write"]
     Verify[Byte-by-byte verify]
     CheckExec[protection::is_executable]
     Flush[invalidate_icache]
-    Done([LoadedShellcode — address + size])
+    Done(["LoadedShellcode — address + size"])
 
     Builder --> Config --> Load --> Alloc
     Alloc -->|yes| AllocNear
