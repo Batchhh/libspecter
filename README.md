@@ -8,7 +8,7 @@ ARM64 memory manipulation framework for iOS/macOS. Compiled as a static library 
 
 Provides inline function hooking, stealth code patching, hardware breakpoints, memory read/write, symbol resolution, and shellcode loading — all targeting `aarch64-apple-ios` & `aarch64-apple-darwin`.
 
-## Quick start
+## Quick start for Rust sources
 
 ```bash
 cargo add specter-mem
