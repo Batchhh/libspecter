@@ -124,9 +124,9 @@ check-ios: ios
 check-macos: macos
 	@echo "── Checking exported symbols in $(MACOS_LIB) ──"
 	@nm -gU $(MACOS_LIB) | grep ' T _mem_' | sort
-	@EXPECTED=$$(grep -E '^(int32_t|size_t|void)[[:space:]]+mem_[a-z]' $(HEADER) | wc -l | tr -d ' '); \
+	@EXPECTED=$$(grep -E '^(int32_t|size_t|void)[[:space:]]+mem_[a-z]' $(HEADER) | grep -v 'mem_brk_' | wc -l | tr -d ' '); \
 	FOUND=$$(nm -gU $(MACOS_LIB) | grep -c ' T _mem_'); \
-	echo "Declared in header: $$EXPECTED  |  Found in lib: $$FOUND"; \
+	echo "Declared in header (macOS): $$EXPECTED  |  Found in lib: $$FOUND"; \
 	if [ "$$FOUND" -ge "$$EXPECTED" ]; then echo "OK (macOS)"; else echo "MISMATCH — check ffi.rs"; exit 1; fi
 
 clean:

@@ -6,5 +6,6 @@
 //! - Thread suspension/resumption for safe memory patching
 //! - Task port management
 
+#[cfg(target_os = "ios")]
 pub mod breakpoint;
 pub mod thread;

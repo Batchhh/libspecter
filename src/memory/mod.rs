@@ -21,4 +21,6 @@ pub mod platform;
 pub use allocation::shellcode;
 pub use info::{code_cave, image, protection, scan};
 pub use manipulation::{checksum, hook, patch, rw};
-pub use platform::{breakpoint, thread};
+#[cfg(target_os = "ios")]
+pub use platform::breakpoint;
+pub use platform::thread;

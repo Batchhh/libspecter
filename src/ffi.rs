@@ -72,6 +72,7 @@ fn rw_err(e: &crate::memory::manipulation::rw::RwError) -> i32 {
     }
 }
 
+#[cfg(target_os = "ios")]
 fn brk_err(e: &crate::memory::platform::breakpoint::BrkHookError) -> i32 {
     use crate::memory::platform::breakpoint::BrkHookError;
     match e {
@@ -103,6 +104,7 @@ static HOOK_REGISTRY: Lazy<Mutex<HashMap<u64, crate::memory::manipulation::hook:
 static PATCH_REGISTRY: Lazy<Mutex<HashMap<usize, crate::memory::manipulation::patch::Patch>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+#[cfg(target_os = "ios")]
 static BRK_REGISTRY: Lazy<Mutex<HashMap<u64, crate::memory::platform::breakpoint::Breakpoint>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -660,6 +662,7 @@ pub unsafe extern "C" fn mem_clear_symbol_cache() {
 
 /// Installs a hardware breakpoint hook at `rva` (relative to the target image base).
 /// `handle_out` must be non-null.
+#[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mem_brk_install(
     rva: usize,
@@ -683,6 +686,7 @@ pub unsafe extern "C" fn mem_brk_install(
 
 /// Installs a hardware breakpoint hook at an absolute address.
 /// `handle_out` must be non-null.
+#[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mem_brk_install_at(
     target: usize,
@@ -705,6 +709,7 @@ pub unsafe extern "C" fn mem_brk_install_at(
 }
 
 /// Removes a breakpoint by handle.
+#[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mem_brk_remove(handle: u64) -> i32 {
     let bp = match BRK_REGISTRY.lock().remove(&handle) {
@@ -718,6 +723,7 @@ pub unsafe extern "C" fn mem_brk_remove(handle: u64) -> i32 {
 }
 
 /// Removes the breakpoint registered for `target` by iterating the registry.
+#[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mem_brk_remove_at(target: usize) -> i32 {
     let mut registry = BRK_REGISTRY.lock();
@@ -739,12 +745,14 @@ pub unsafe extern "C" fn mem_brk_remove_at(target: usize) -> i32 {
 }
 
 /// Returns the number of currently active hardware breakpoints.
+#[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mem_brk_active_count() -> i32 {
     crate::memory::platform::breakpoint::active_count() as i32
 }
 
 /// Returns the maximum number of hardware breakpoints supported by this device.
+#[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mem_brk_max_breakpoints() -> i32 {
     crate::memory::platform::breakpoint::max_breakpoints()

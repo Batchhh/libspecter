@@ -15,6 +15,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <TargetConditionals.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -189,12 +190,13 @@ void    mem_cache_symbol(const char *symbol_name, uintptr_t address);
 /** Evict all entries from the symbol cache. */
 void    mem_clear_symbol_cache(void);
 
-/* 
- * Hardware Breakpoint API  (max 6 concurrent on ARM64)
+/*
+ * Hardware Breakpoint API  (max 6 concurrent on ARM64, iOS only)
  *
  * Breakpoints redirect execution via Mach exception handling —
  * no code is modified at the target address.
  *  */
+#if TARGET_OS_IOS
 
 /** Install hardware breakpoint hook at image-relative RVA. */
 int32_t mem_brk_install(uintptr_t rva,
@@ -217,6 +219,8 @@ int32_t mem_brk_active_count(void);
 
 /** Maximum hardware breakpoints supported on this device (typically 6). */
 int32_t mem_brk_max_breakpoints(void);
+
+#endif /* TARGET_OS_IOS */
 
 /* 
  * Shellcode API
