@@ -1,6 +1,6 @@
 [package]
 name = "specter-mem"
-version = "1.0.3"
+version = "1.0.3-2"
 edition = "2024"
 description = "ARM64 memory manipulation framework for iOS/macOS — inline hooking, stealth code patching, hardware breakpoints, and shellcode loading"
 license = "MIT"
@@ -23,10 +23,10 @@ crate-type = ["staticlib", "rlib"]
 dev_release = []
 
 [dependencies]
-mach2 = "0.4.3"
+mach2 = "0.6.0"
 once_cell = "1"
 parking_lot = "0.12"
-thiserror = "1.0.69"
+thiserror = "2.0.18"
 libc = "0.2"
 hex = "0.4"
 dashmap = "6"
