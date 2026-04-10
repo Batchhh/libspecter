@@ -10,6 +10,7 @@
 
 pub mod code_cave;
 pub mod image;
+pub mod macho;
 pub mod protection;
 pub mod scan;
 

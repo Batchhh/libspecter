@@ -4,7 +4,7 @@ Specter can be used directly as a Rust crate without going through the C FFI lay
 
 ```toml
 [dependencies]
-specter-mem = "1.0.2"
+specter-mem = "1.0.4"
 ```
 
 > **Platform note:** The crate builds for both iOS (`aarch64-apple-ios`) and macOS (`aarch64-apple-darwin`). Use `make ios` or `make macos` to build a single target.
@@ -204,6 +204,26 @@ use specter::memory::info::image;
 let base = image::get_image_base("MyApp")?;
 ```
 
+## Image Enumeration
+
+```rust
+use specter::memory::info::image;
+
+// List all loaded images
+let images = image::get_all_images();
+for img in &images {
+    println!("[{}] {:#x} {}", img.index, img.base, img.name);
+}
+
+// Get count
+let count = image::image_count();
+
+// Get name by dyld index
+if let Some(name) = image::get_image_name(0) {
+    println!("Image 0: {}", name);
+}
+```
+
 ## Pattern Scanning
 
 ### IDA-Style Pattern Scan
@@ -310,4 +330,85 @@ let instructions: &[u32] = &[
 ];
 
 let loaded = ShellcodeBuilder::from_instructions(instructions).load()?;
+```
+
+## Memory Protection
+
+Query and modify page protection flags.
+
+```rust
+use specter::memory::info::protection;
+
+// Query protection
+let prot = protection::get_protection(0x100004000)?;
+println!("readable={} writable={} executable={}",
+         prot.is_readable(), prot.is_writable(), prot.is_executable());
+
+// Quick boolean checks
+let readable = protection::is_readable(0x100004000);
+
+// Full region info
+let info = protection::get_region_info(0x100004000)?;
+println!("region: {:#x} size: {:#x}", info.address, info.size);
+
+// Find region containing or after an address
+let region = protection::find_region(0x100004000)?;
+
+// Change protection
+protection::protect(addr, size, protection::PageProtection::read_write())?;
+
+// Enumerate all readable regions
+let regions = protection::get_all_regions()?;
+```
+
+## Mach-O Segments & Sections
+
+Query Mach-O segments and sections of loaded images.
+
+```rust
+use specter::memory::info::macho;
+
+// Get a segment
+let text = macho::get_segment("MyApp", "__TEXT")?;
+println!("__TEXT: {:#x} - {:#x} ({} bytes)", text.start, text.end, text.size);
+
+// Get a section within a segment
+let text_text = macho::get_section("MyApp", "__TEXT", "__text")?;
+```
+
+## Patch Introspection
+
+Query details about applied patches.
+
+```rust
+use specter::memory::manipulation::patch;
+
+// After applying a patch:
+let p = patch::apply(0x1234, "1F 20 03 D5")?;
+
+// Query patch info
+let size = p.size();
+let orig = p.original_bytes();
+let patched = p.patch_bytes();
+let current = p.current_bytes();
+```
+
+## Memory Backup
+
+Standalone backup and restore, independent of the patch system.
+
+```rust
+use specter::memory::manipulation::backup::MemoryBackup;
+
+// Create a backup
+let backup = MemoryBackup::create(0x100004000, 64)?;
+
+// Inspect
+let addr = backup.address();
+let size = backup.size();
+let orig = backup.original_bytes();
+let curr = backup.current_bytes();
+
+// Restore original bytes
+backup.restore()?;
 ```

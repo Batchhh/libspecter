@@ -16,7 +16,7 @@ Specter builds for both **iOS** (`aarch64-apple-ios`) and **macOS** (`aarch64-ap
 graph LR
     CC[C/C++ consumer — specter.h]
     RC[Rust caller — direct]
-    FFI[src/ffi.rs — stable C ABI · error mapping · 4 registries]
+    FFI[src/ffi.rs — stable C ABI · error mapping · 5 registries]
     Mods[src/memory/ — manipulation · info · platform · allocation]
     Kern[Mach kernel · dyld · POSIX]
 
@@ -523,6 +523,7 @@ flowchart TD
         PR[PATCH_REGISTRY]
         BR[BRK_REGISTRY]
         SR[SHELLCODE_REGISTRY]
+        BKR[BACKUP_REGISTRY]
     end
 
     subgraph Internal[Internal registries — Mutex]
@@ -574,7 +575,72 @@ Wraps `mach_vm_region` and `mach_vm_protect` with a typed `PageProtection` abstr
 | `is_readable/writable/executable(addr)` | Quick boolean checks |
 | `get_all_regions()` | Enumerate all readable regions in the process |
 
-Used internally by the scan engine (to verify readability before scanning), the code cave finder, and the fallback write path.
+Used internally by the scan engine (to verify readability before scanning), the code cave finder, and the fallback write path. Also exposed via the C FFI for direct use by consumers.
+
+---
+
+## Mach-O Segment/Section Querying (`src/memory/info/macho.rs`)
+
+Queries named segments and sections of loaded Mach-O images via Darwin's `getsegmentdata()` and `getsectiondata()` C functions. The image base address (from `get_image_base`) is cast to a `mach_header_64*` for these calls.
+
+| Function | Description |
+|----------|-------------|
+| `get_segment(image_name, seg_name)` | Get segment address, end, and size |
+| `get_section(image_name, seg_name, sect_name)` | Get section within a segment |
+
+Returns `SegmentData { start, end, size }`. Useful for targeted scanning — e.g., scan only `__TEXT,__text` instead of the entire image.
+
+---
+
+## Image Enumeration (`src/memory/info/image.rs`)
+
+Beyond the existing `get_image_base(name)` lookup, the image module now provides:
+
+| Function | Description |
+|----------|-------------|
+| `get_all_images()` | List all loaded images with index, name, and base |
+| `image_count()` | Total number of loaded dyld images |
+| `get_image_name(index)` | Full path of an image by dyld index |
+
+All functions call dyld APIs (`_dyld_image_count`, `_dyld_get_image_name`, `_dyld_get_image_header`).
+
+---
+
+## Memory Backup (`src/memory/manipulation/backup.rs`)
+
+Standalone backup and restore mechanism, independent of the patch system. Creates a snapshot of bytes at an address that can be restored later.
+
+```mermaid
+flowchart TD
+    Create(["MemoryBackup::create(addr, size)"])
+    ReadOrig[Read bytes at addr via rw::read]
+    Store[Store address + original_bytes]
+    Done(["MemoryBackup"])
+
+    Restore(["backup.restore()"])
+    Suspend[Suspend all threads]
+    StealthWrite[stealth_write original bytes]
+    Resume[Resume threads]
+
+    Create --> ReadOrig --> Store --> Done
+    Restore --> Suspend --> StealthWrite --> Resume
+```
+
+Backups are tracked in the FFI layer via `BACKUP_REGISTRY` (handle-based, same pattern as hooks).
+
+---
+
+## Patch Introspection
+
+The `Patch` struct now tracks three byte states:
+
+| Field | Description |
+|-------|-------------|
+| `original_bytes` | Bytes that were overwritten when the patch was applied |
+| `patch_bytes` | Bytes that were written as the patch |
+| `current_bytes()` | Live read of bytes at the patch address |
+
+Comparing `current_bytes()` against `patch_bytes` detects external modification. The FFI exposes `mem_patch_list`, `mem_patch_count`, `mem_patch_size`, `mem_patch_orig_bytes`, `mem_patch_patch_bytes`, and `mem_patch_curr_bytes` for enumeration and inspection.
 
 ---
 

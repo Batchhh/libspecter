@@ -9,6 +9,7 @@
 //! - **Read/Write**: Safe abstractions for reading and writing process memory
 //! - **Checksum**: Self-integrity verification for installed hooks
 
+pub mod backup;
 pub mod checksum;
 pub mod hook;
 pub mod patch;

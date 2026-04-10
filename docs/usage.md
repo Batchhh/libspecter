@@ -22,7 +22,13 @@ C++ gets typed template wrappers for `mem_read`/`mem_write` automatically. In C,
 6. [Image & Symbol API](#6-image--symbol-api)
 7. [Hardware Breakpoints](#7-hardware-breakpoints)
 8. [Shellcode Loading](#8-shellcode-loading)
-9. [Common Patterns](#9-common-patterns)
+9. [Pattern Scanning](#9-pattern-scanning)
+10. [Memory Protection](#10-memory-protection)
+11. [Image Enumeration](#11-image-enumeration)
+12. [Patch Introspection](#12-patch-introspection)
+13. [Memory Backup](#13-memory-backup)
+14. [Segment / Section Querying](#14-segment--section-querying)
+15. [Common Patterns](#15-common-patterns)
 
 ---
 
@@ -46,6 +52,10 @@ Every function returns `int32_t`. Zero means success; negative values are errors
 | `-11` | `MEM_ERR_RANGE` | Branch target out of ±128 MB range |
 | `-12` | `MEM_ERR_EMPTY` | Empty instruction / patch data |
 | `-13` | `MEM_ERR_HW_LIMIT` | Hardware breakpoint limit exceeded |
+| `-14` | `MEM_ERR_SCAN_PATTERN` | Invalid scan pattern |
+| `-15` | `MEM_ERR_SCAN_ACCESS` | Scan hit unreadable memory |
+| `-16` | `MEM_ERR_SCAN_REGION` | Image region enumeration failed |
+| `-17` | `MEM_ERR_MACHO` | Mach-O segment/section parse error |
 
 Helper macro for quick prototyping:
 
@@ -427,7 +437,232 @@ CHECK(mem_shellcode_load(sc, sizeof sc,
 
 ---
 
-## 9. Common Patterns
+## 9. Pattern Scanning
+
+Scan memory ranges or entire loaded images for byte patterns. IDA-style patterns use hex bytes separated by spaces, with `??` as a wildcard.
+
+### 9.1 Scan a Memory Range
+
+```c
+uintptr_t results[64];
+size_t    count;
+CHECK(mem_scan_pattern(start, size, "DE AD ?? EF", results, 64, &count));
+for (size_t i = 0; i < count && i < 64; i++)
+    printf("match at 0x%lx\n", results[i]);
+```
+
+### 9.2 Scan an Entire Image
+
+```c
+uintptr_t results[64];
+size_t    count;
+CHECK(mem_scan_image("MyApp", "1F 20 03 D5 C0 03 5F D6", results, 64, &count));
+```
+
+### 9.3 Find First Match
+
+```c
+uintptr_t addr;
+CHECK(mem_scan_find_first(start, size, "DE AD ?? EF", &addr));
+
+// Or in an entire image:
+CHECK(mem_scan_image_first("MyApp", "DE AD ?? EF", &addr));
+```
+
+### 9.4 Raw Bytes + Mask
+
+```c
+uint8_t pattern[] = {0xDE, 0xAD, 0x00, 0xEF};
+const char *mask  = "xx?x";
+uintptr_t results[64];
+size_t    count;
+CHECK(mem_scan_raw(start, size, pattern, mask, sizeof pattern,
+                   results, 64, &count));
+```
+
+### 9.5 Cached Scanning
+
+Subsequent calls with the same parameters return cached results.
+
+```c
+uintptr_t results[64];
+size_t    count;
+CHECK(mem_scan_cached(start, size, "DE AD ?? EF", results, 64, &count));
+
+// Clear when patterns may have changed:
+mem_scan_clear_cache();
+```
+
+---
+
+## 10. Memory Protection
+
+Query and modify memory page protection flags.
+
+### 10.1 Query Protection
+
+```c
+int32_t prot;
+CHECK(mem_get_protection(0x100004000, &prot));
+printf("prot flags: %d\n", prot);
+
+// Quick boolean checks (return 1 or 0)
+if (mem_is_readable(0x100004000))
+    printf("readable\n");
+if (mem_is_writable(0x100004000))
+    printf("writable\n");
+if (mem_is_executable(0x100004000))
+    printf("executable\n");
+```
+
+### 10.2 Query Region Info
+
+```c
+uintptr_t region_addr;
+size_t    region_size;
+int32_t   prot;
+CHECK(mem_get_region_info(0x100004000, &region_addr, &region_size, &prot));
+printf("region: 0x%lx size: 0x%zx prot: %d\n", region_addr, region_size, prot);
+
+// Find region containing or after an address:
+CHECK(mem_find_region(0x100004000, &region_addr, &region_size, &prot));
+```
+
+### 10.3 Change Protection
+
+```c
+#include <mach/vm_prot.h>
+CHECK(mem_protect(page_addr, page_size, VM_PROT_READ | VM_PROT_WRITE));
+```
+
+### 10.4 Enumerate All Regions
+
+```c
+size_t count;
+mem_get_all_regions(NULL, 0, &count); // query count first
+
+mem_region_t *regions = malloc(count * sizeof(mem_region_t));
+mem_get_all_regions(regions, count, &count);
+for (size_t i = 0; i < count; i++)
+    printf("0x%lx  size=0x%zx  prot=%d\n",
+           regions[i].address, regions[i].size, regions[i].protection);
+free(regions);
+```
+
+---
+
+## 11. Image Enumeration
+
+List all loaded dynamic libraries and their base addresses.
+
+```c
+// Get total count
+size_t count;
+CHECK(mem_image_count(&count));
+printf("%zu images loaded\n", count);
+
+// List all images
+mem_image_t *images = malloc(count * sizeof(mem_image_t));
+CHECK(mem_image_list(images, count, &count));
+
+for (size_t i = 0; i < count; i++) {
+    char name[512];
+    if (mem_image_name(images[i].index, name, sizeof name) == MEM_OK)
+        printf("[%u] 0x%lx  %s\n", images[i].index, images[i].base, name);
+}
+free(images);
+```
+
+---
+
+## 12. Patch Introspection
+
+Query details about active patches.
+
+```c
+// Count and list active patches
+size_t count = mem_patch_count();
+
+uintptr_t addrs[64];
+size_t    total;
+mem_patch_list(addrs, 64, &total);
+
+// Inspect a specific patch
+for (size_t i = 0; i < total && i < 64; i++) {
+    size_t sz;
+    mem_patch_size(addrs[i], &sz);
+
+    uint8_t orig[64], patch[64], curr[64];
+    mem_patch_orig_bytes(addrs[i], orig, sz);
+    mem_patch_patch_bytes(addrs[i], patch, sz);
+    mem_patch_curr_bytes(addrs[i], curr, sz);
+
+    // Compare curr vs patch to detect external modification
+    if (memcmp(curr, patch, sz) != 0)
+        printf("patch at 0x%lx was externally modified\n", addrs[i]);
+}
+```
+
+---
+
+## 13. Memory Backup
+
+Standalone memory backup and restore, independent of the patch system. Useful for backing up a region before making manual modifications.
+
+```c
+// Create a backup
+uint64_t handle;
+CHECK(mem_backup_create(0x100004000, 64, &handle));
+
+// ... modify memory however you want ...
+
+// Query backup info
+uintptr_t backed_addr;
+size_t    backed_size;
+mem_backup_address(handle, &backed_addr);
+mem_backup_size(handle, &backed_size);
+
+// Read original and current bytes
+uint8_t orig[64], curr[64];
+mem_backup_orig_bytes(handle, orig, 64);
+mem_backup_curr_bytes(handle, curr, 64);
+
+// Restore original bytes
+CHECK(mem_backup_restore(handle));
+
+// Destroy when no longer needed (does not restore)
+CHECK(mem_backup_destroy(handle));
+```
+
+---
+
+## 14. Segment / Section Querying
+
+Query Mach-O segments and sections of loaded images.
+
+```c
+// Get a segment (e.g., __TEXT)
+mem_segment_t text;
+CHECK(mem_get_segment("MyApp", "__TEXT", &text));
+printf("__TEXT: 0x%lx - 0x%lx (%zu bytes)\n", text.start, text.end, text.size);
+
+// Get a specific section within a segment
+mem_segment_t text_text;
+CHECK(mem_get_section("MyApp", "__TEXT", "__text", &text_text));
+printf("__text: 0x%lx - 0x%lx (%zu bytes)\n",
+       text_text.start, text_text.end, text_text.size);
+
+// Useful for targeted scanning
+uintptr_t results[256];
+size_t    count;
+mem_scan_pattern(text_text.start, text_text.size, "C0 03 5F D6",
+                 results, 256, &count);
+printf("found %zu RET instructions in __text\n", count);
+```
+
+---
+
+## 15. Common Patterns
 
 ### Guard Against Double Install
 

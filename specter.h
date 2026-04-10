@@ -36,6 +36,30 @@ extern "C" {
 #define MEM_ERR_RANGE     -11   /* Branch target out of ±128 MB range  */
 #define MEM_ERR_EMPTY     -12   /* Empty instruction / patch data      */
 #define MEM_ERR_HW_LIMIT  -13   /* Hardware breakpoint limit exceeded  */
+#define MEM_ERR_SCAN_PATTERN -14 /* Invalid scan pattern                */
+#define MEM_ERR_SCAN_ACCESS  -15 /* Scan hit unreadable memory          */
+#define MEM_ERR_SCAN_REGION  -16 /* Image region enumeration failed     */
+#define MEM_ERR_MACHO        -17 /* Mach-O segment/section parse error  */
+
+/** Memory region information. */
+typedef struct {
+    uintptr_t address;
+    size_t    size;
+    int32_t   protection;  /* Raw VM_PROT_* flags */
+} mem_region_t;
+
+/** Loaded image information (index + base address). */
+typedef struct {
+    uint32_t  index;
+    uintptr_t base;
+} mem_image_t;
+
+/** Segment or section data (start, end, size). */
+typedef struct {
+    uintptr_t start;
+    uintptr_t end;
+    size_t    size;
+} mem_segment_t;
 
 // Init API
 
@@ -114,7 +138,7 @@ int32_t mem_hook_is_hooked(uintptr_t target);
  *  Writes actual count to *count_out (may exceed cap if buf is small). */
 int32_t mem_hook_list(uintptr_t *buf, size_t cap, size_t *count_out);
 
-/* 
+/*
  * Patch API
  *
  * Patches are identified by the absolute address where they were
@@ -173,7 +197,7 @@ int32_t mem_write_rva(uintptr_t rva,     const void *value, size_t size);
  *  Use this when patching executable code pages. */
 int32_t mem_write_bytes(uintptr_t address, const uint8_t *data, size_t len);
 
-/* 
+/*
  * Image / Symbol API
  *  */
 
@@ -222,7 +246,7 @@ int32_t mem_brk_max_breakpoints(void);
 
 #endif /* TARGET_OS_IOS */
 
-/* 
+/*
  * Shellcode API
  *  */
 
@@ -255,6 +279,186 @@ int32_t mem_shellcode_load(const uint8_t  *code,
 
 /** Free shellcode previously loaded with mem_shellcode_load. */
 int32_t mem_shellcode_free(uintptr_t address);
+
+/*
+ * Scan API
+ *
+ * IDA-style patterns use hex bytes separated by spaces, with "??" as
+ * a wildcard:  "A1 ?? B2 EF".
+ *
+ * Multi-result functions write up to `cap` addresses into `buf` and the
+ * total match count into `*count_out`. Both `buf` and `count_out` are
+ * optional (pass NULL to skip).
+ */
+
+/** Scan a memory range for an IDA-style pattern. */
+int32_t mem_scan_pattern(uintptr_t    start,
+                         size_t       size,
+                         const char  *ida_pattern,
+                         uintptr_t   *buf,        /* optional */
+                         size_t       cap,
+                         size_t      *count_out);  /* optional */
+
+/** Scan an entire loaded image for an IDA-style pattern. */
+int32_t mem_scan_image(const char  *image_name,
+                       const char  *ida_pattern,
+                       uintptr_t   *buf,        /* optional */
+                       size_t       cap,
+                       size_t      *count_out);  /* optional */
+
+/** Scan with raw bytes and a mask ('x' = match, '?' = wildcard). */
+int32_t mem_scan_raw(uintptr_t       start,
+                     size_t          size,
+                     const uint8_t  *pattern,
+                     const char     *mask,
+                     size_t          pattern_len,
+                     uintptr_t      *buf,        /* optional */
+                     size_t          cap,
+                     size_t         *count_out);  /* optional */
+
+/** Scan with caching — repeated calls return cached results. */
+int32_t mem_scan_cached(uintptr_t    start,
+                        size_t       size,
+                        const char  *ida_pattern,
+                        uintptr_t   *buf,        /* optional */
+                        size_t       cap,
+                        size_t      *count_out);  /* optional */
+
+/** Clear the scan result cache. */
+void    mem_scan_clear_cache(void);
+
+/** Find the first match for an IDA pattern in a memory range. */
+int32_t mem_scan_find_first(uintptr_t    start,
+                            size_t       size,
+                            const char  *ida_pattern,
+                            uintptr_t   *result_out);
+
+/** Find the first match for an IDA pattern in an entire image. */
+int32_t mem_scan_image_first(const char  *image_name,
+                             const char  *ida_pattern,
+                             uintptr_t   *result_out);
+
+/*
+ * Memory Protection API
+ */
+
+/** Query raw VM_PROT_* flags for the page containing addr. */
+int32_t mem_get_protection(uintptr_t addr, int32_t *prot_out);
+
+/** Query full region info. All out-parameters are optional. */
+int32_t mem_get_region_info(uintptr_t  addr,
+                            uintptr_t *region_addr_out, /* optional */
+                            size_t    *region_size_out,  /* optional */
+                            int32_t   *prot_out);        /* optional */
+
+/** Find the region containing or following addr. */
+int32_t mem_find_region(uintptr_t  addr,
+                        uintptr_t *region_addr_out, /* optional */
+                        size_t    *region_size_out,  /* optional */
+                        int32_t   *prot_out);        /* optional */
+
+/** Returns 1 if readable, 0 otherwise. */
+int32_t mem_is_readable(uintptr_t addr);
+/** Returns 1 if writable, 0 otherwise. */
+int32_t mem_is_writable(uintptr_t addr);
+/** Returns 1 if executable, 0 otherwise. */
+int32_t mem_is_executable(uintptr_t addr);
+
+/** Change memory protection for a region. */
+int32_t mem_protect(uintptr_t addr, size_t size, int32_t protection);
+
+/** Enumerate all readable memory regions.
+ *  Writes up to cap entries into buf. count_out receives total count. */
+int32_t mem_get_all_regions(mem_region_t *buf,       /* optional */
+                            size_t        cap,
+                            size_t       *count_out);
+
+/*
+ * Image Enumeration API
+ */
+
+/** Get the total number of loaded images. */
+int32_t mem_image_count(size_t *count_out);
+
+/** List all loaded images (index + base). count_out receives total count. */
+int32_t mem_image_list(mem_image_t *buf,       /* optional */
+                       size_t       cap,
+                       size_t      *count_out);
+
+/** Get the full path of a loaded image by dyld index.
+ *  Writes a null-terminated string into name_buf.
+ *  Returns MEM_ERR_RANGE if buffer too small. */
+int32_t mem_image_name(uint32_t  index,
+                       char     *name_buf,
+                       size_t    name_buf_size);
+
+/*
+ * Patch Info API
+ */
+
+/** Number of active patches. */
+size_t  mem_patch_count(void);
+
+/** Get the size of a patch at address. */
+int32_t mem_patch_size(uintptr_t address, size_t *size_out);
+
+/** Read the original bytes backed up when the patch was applied. */
+int32_t mem_patch_orig_bytes(uintptr_t address, uint8_t *buf, size_t buf_size);
+
+/** Read the bytes that were written as the patch. */
+int32_t mem_patch_patch_bytes(uintptr_t address, uint8_t *buf, size_t buf_size);
+
+/** Read the current live bytes at the patch address. */
+int32_t mem_patch_curr_bytes(uintptr_t address, uint8_t *buf, size_t buf_size);
+
+/** List all active patch addresses.
+ *  count_out receives total count. */
+int32_t mem_patch_list(uintptr_t *buf, size_t cap, size_t *count_out);
+
+/*
+ * Memory Backup API
+ *
+ * Standalone memory backup/restore, independent of the patch system.
+ * Backups are identified by an opaque uint64_t handle.
+ */
+
+/** Create a backup of size bytes starting at address. */
+int32_t mem_backup_create(uintptr_t address, size_t size, uint64_t *handle_out);
+
+/** Restore the original bytes from a backup. */
+int32_t mem_backup_restore(uint64_t handle);
+
+/** Get the size of a backup. */
+int32_t mem_backup_size(uint64_t handle, size_t *size_out);
+
+/** Get the address that was backed up. */
+int32_t mem_backup_address(uint64_t handle, uintptr_t *address_out);
+
+/** Read the stored original bytes into buf. */
+int32_t mem_backup_orig_bytes(uint64_t handle, uint8_t *buf, size_t buf_size);
+
+/** Read the current live bytes at the backed-up address. */
+int32_t mem_backup_curr_bytes(uint64_t handle, uint8_t *buf, size_t buf_size);
+
+/** Destroy a backup (free resources, no restore). */
+int32_t mem_backup_destroy(uint64_t handle);
+
+/*
+ * Segment / Section API
+ *
+ * Query Mach-O segments and sections of loaded images.
+ */
+
+/** Get a named segment from a loaded image (e.g., "__TEXT"). */
+int32_t mem_get_segment(const char    *image_name,
+                        const char    *segment_name,
+                        mem_segment_t *data_out);
+
+/** Get a named section within a segment (e.g., "__TEXT", "__text"). */
+int32_t mem_get_section(const char    *image_name,
+                        const char    *segment_name,
+                        const char    *section_name,
+                        mem_segment_t *data_out);
 
 #ifdef __cplusplus
 } /* extern "C" */

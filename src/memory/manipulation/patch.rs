@@ -61,6 +61,8 @@ pub struct Patch {
     address: usize,
     /// The original bytes that were overwritten
     original_bytes: Vec<u8>,
+    /// The bytes that were written as the patch
+    patch_bytes: Vec<u8>,
     /// Optional code cave used by this patch
     cave: Option<crate::memory::info::code_cave::CodeCave>,
 }
@@ -105,6 +107,21 @@ impl Patch {
     pub fn original_bytes(&self) -> &[u8] {
         &self.original_bytes
     }
+
+    /// Returns the bytes that were written as the patch
+    pub fn patch_bytes(&self) -> &[u8] {
+        &self.patch_bytes
+    }
+
+    /// Returns the size of the patch in bytes
+    pub fn size(&self) -> usize {
+        self.original_bytes.len()
+    }
+
+    /// Reads the current bytes at the patch address
+    pub fn current_bytes(&self) -> Vec<u8> {
+        unsafe { read_bytes(self.address, self.original_bytes.len()) }
+    }
 }
 
 /// Applies a hex string patch at a relative virtual address (RVA)
@@ -147,6 +164,7 @@ pub fn apply(rva: usize, hex_str: &str) -> Result<Patch, PatchError> {
         Ok(Patch {
             address,
             original_bytes,
+            patch_bytes: bytes,
             cave: None,
         })
     }
@@ -206,6 +224,7 @@ where
         Ok(Patch {
             address,
             original_bytes,
+            patch_bytes: bytes,
             cave: None,
         })
     }
@@ -308,6 +327,7 @@ where
         Ok(Patch {
             address,
             original_bytes,
+            patch_bytes: b_bytes.to_vec(),
             cave: Some(cave),
         })
     }
@@ -399,6 +419,7 @@ pub fn apply_in_cave(rva: usize, hex_str: &str) -> Result<Patch, PatchError> {
         Ok(Patch {
             address,
             original_bytes,
+            patch_bytes: b_bytes.to_vec(),
             cave: Some(cave),
         })
     }
@@ -436,6 +457,7 @@ pub fn apply_at_address(address: usize, bytes: &[u8]) -> Result<Patch, PatchErro
         Ok(Patch {
             address,
             original_bytes,
+            patch_bytes: bytes.to_vec(),
             cave: None,
         })
     }

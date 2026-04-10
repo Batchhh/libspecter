@@ -31,6 +31,10 @@ pub const MEM_ERR_SYMBOL: i32 = -10;
 pub const MEM_ERR_RANGE: i32 = -11;
 pub const MEM_ERR_EMPTY: i32 = -12;
 pub const MEM_ERR_HW_LIMIT: i32 = -13;
+pub const MEM_ERR_SCAN_PATTERN: i32 = -14;
+pub const MEM_ERR_SCAN_ACCESS: i32 = -15;
+pub const MEM_ERR_SCAN_REGION: i32 = -16;
+pub const MEM_ERR_MACHO: i32 = -17;
 
 // Private error-mapping helpers
 
@@ -85,6 +89,35 @@ fn brk_err(e: &crate::memory::platform::breakpoint::BrkHookError) -> i32 {
     }
 }
 
+fn scan_err(e: &crate::memory::info::scan::ScanError) -> i32 {
+    use crate::memory::info::scan::ScanError;
+    match e {
+        ScanError::InvalidPattern(_) => MEM_ERR_SCAN_PATTERN,
+        ScanError::NotFound => MEM_ERR_NOT_FOUND,
+        ScanError::MemoryAccessViolation(_) => MEM_ERR_SCAN_ACCESS,
+        ScanError::InvalidRegion => MEM_ERR_SCAN_REGION,
+        ScanError::ImageNotFound(_) => MEM_ERR_NOT_FOUND,
+    }
+}
+
+fn protection_err(e: &crate::memory::info::protection::ProtectionError) -> i32 {
+    use crate::memory::info::protection::ProtectionError;
+    match e {
+        ProtectionError::QueryFailed(_) => MEM_ERR_NOT_FOUND,
+        ProtectionError::InvalidAddress(_) => MEM_ERR_NULL,
+        ProtectionError::ProtectionFailed(_) => MEM_ERR_PROTECT,
+    }
+}
+
+fn macho_err(e: &crate::memory::info::macho::MachoError) -> i32 {
+    use crate::memory::info::macho::MachoError;
+    match e {
+        MachoError::ImageNotFound(_) => MEM_ERR_NOT_FOUND,
+        MachoError::SegmentNotFound(_) => MEM_ERR_MACHO,
+        MachoError::SectionNotFound(_, _) => MEM_ERR_MACHO,
+    }
+}
+
 fn loader_err(e: &crate::memory::allocation::shellcode::LoaderError) -> i32 {
     use crate::memory::allocation::shellcode::LoaderError;
     match e {
@@ -110,6 +143,10 @@ static BRK_REGISTRY: Lazy<Mutex<HashMap<u64, crate::memory::platform::breakpoint
 
 static SHELLCODE_REGISTRY: Lazy<
     Mutex<HashMap<usize, crate::memory::allocation::shellcode::LoadedShellcode>>,
+> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+static BACKUP_REGISTRY: Lazy<
+    Mutex<HashMap<u64, crate::memory::manipulation::backup::MemoryBackup>>,
 > = Lazy::new(|| Mutex::new(HashMap::new()));
 
 static HANDLE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -847,5 +884,759 @@ pub unsafe extern "C" fn mem_shellcode_free(address: usize) -> i32 {
             MEM_OK
         }
         None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+// Scan API
+
+/// Scans a memory range for an IDA-style pattern (e.g., "A1 ?? B2 EF").
+/// Writes up to `cap` result addresses into `buf`. Writes total match count to `*count_out`.
+/// Both `buf` and `count_out` are optional.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_scan_pattern(
+    start: usize,
+    size: usize,
+    ida_pattern: *const c_char,
+    buf: *mut usize,
+    cap: usize,
+    count_out: *mut usize,
+) -> i32 {
+    let pattern = unsafe {
+        match cstr_to_str(ida_pattern) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let results = match crate::memory::info::scan::scan_ida_pattern(start, size, pattern) {
+        Ok(r) => r,
+        Err(ref e) => return scan_err(e),
+    };
+    let total = results.len();
+    if !count_out.is_null() {
+        unsafe { *count_out = total };
+    }
+    if !buf.is_null() {
+        let to_copy = total.min(cap);
+        for (i, &addr) in results.iter().take(to_copy).enumerate() {
+            unsafe { *buf.add(i) = addr };
+        }
+    }
+    MEM_OK
+}
+
+/// Scans an entire loaded image for an IDA-style pattern.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_scan_image(
+    image_name: *const c_char,
+    ida_pattern: *const c_char,
+    buf: *mut usize,
+    cap: usize,
+    count_out: *mut usize,
+) -> i32 {
+    let name = unsafe {
+        match cstr_to_str(image_name) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let pattern = unsafe {
+        match cstr_to_str(ida_pattern) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let results = match crate::memory::info::scan::scan_image(name, pattern) {
+        Ok(r) => r,
+        Err(ref e) => return scan_err(e),
+    };
+    let total = results.len();
+    if !count_out.is_null() {
+        unsafe { *count_out = total };
+    }
+    if !buf.is_null() {
+        let to_copy = total.min(cap);
+        for (i, &addr) in results.iter().take(to_copy).enumerate() {
+            unsafe { *buf.add(i) = addr };
+        }
+    }
+    MEM_OK
+}
+
+/// Scans a memory range with raw bytes and a mask string ('x' = match, '?' = wildcard).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_scan_raw(
+    start: usize,
+    size: usize,
+    pattern: *const u8,
+    mask: *const c_char,
+    pattern_len: usize,
+    buf: *mut usize,
+    cap: usize,
+    count_out: *mut usize,
+) -> i32 {
+    if pattern.is_null() || mask.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let pattern_slice = unsafe { std::slice::from_raw_parts(pattern, pattern_len) };
+    let mask_str = unsafe {
+        match cstr_to_str(mask) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let results =
+        match crate::memory::info::scan::scan_pattern(start, size, pattern_slice, mask_str) {
+            Ok(r) => r,
+            Err(ref e) => return scan_err(e),
+        };
+    let total = results.len();
+    if !count_out.is_null() {
+        unsafe { *count_out = total };
+    }
+    if !buf.is_null() {
+        let to_copy = total.min(cap);
+        for (i, &addr) in results.iter().take(to_copy).enumerate() {
+            unsafe { *buf.add(i) = addr };
+        }
+    }
+    MEM_OK
+}
+
+/// Scans with caching — subsequent calls with the same parameters return cached results.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_scan_cached(
+    start: usize,
+    size: usize,
+    ida_pattern: *const c_char,
+    buf: *mut usize,
+    cap: usize,
+    count_out: *mut usize,
+) -> i32 {
+    let pattern = unsafe {
+        match cstr_to_str(ida_pattern) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let results = match crate::memory::info::scan::scan_pattern_cached(start, size, pattern) {
+        Ok(r) => r,
+        Err(ref e) => return scan_err(e),
+    };
+    let total = results.len();
+    if !count_out.is_null() {
+        unsafe { *count_out = total };
+    }
+    if !buf.is_null() {
+        let to_copy = total.min(cap);
+        for (i, &addr) in results.iter().take(to_copy).enumerate() {
+            unsafe { *buf.add(i) = addr };
+        }
+    }
+    MEM_OK
+}
+
+/// Clears the scan result cache.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_scan_clear_cache() {
+    crate::memory::info::scan::clear_cache();
+}
+
+/// Convenience: finds the first match for an IDA-style pattern in a memory range.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_scan_find_first(
+    start: usize,
+    size: usize,
+    ida_pattern: *const c_char,
+    result_out: *mut usize,
+) -> i32 {
+    if result_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let pattern = unsafe {
+        match cstr_to_str(ida_pattern) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let results = match crate::memory::info::scan::scan_ida_pattern(start, size, pattern) {
+        Ok(r) => r,
+        Err(ref e) => return scan_err(e),
+    };
+    unsafe { *result_out = results[0] };
+    MEM_OK
+}
+
+/// Convenience: finds the first match for an IDA-style pattern in an entire image.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_scan_image_first(
+    image_name: *const c_char,
+    ida_pattern: *const c_char,
+    result_out: *mut usize,
+) -> i32 {
+    if result_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let name = unsafe {
+        match cstr_to_str(image_name) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let pattern = unsafe {
+        match cstr_to_str(ida_pattern) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let results = match crate::memory::info::scan::scan_image(name, pattern) {
+        Ok(r) => r,
+        Err(ref e) => return scan_err(e),
+    };
+    unsafe { *result_out = results[0] };
+    MEM_OK
+}
+
+// Memory Protection API
+
+/// Queries the raw VM_PROT_* flags for the page containing `addr`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_get_protection(addr: usize, prot_out: *mut i32) -> i32 {
+    if prot_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    match crate::memory::info::protection::get_protection(addr) {
+        Ok(p) => {
+            unsafe { *prot_out = p.raw() };
+            MEM_OK
+        }
+        Err(ref e) => protection_err(e),
+    }
+}
+
+/// Queries full region info for the address. All out-parameters are optional.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_get_region_info(
+    addr: usize,
+    region_addr_out: *mut usize,
+    region_size_out: *mut usize,
+    prot_out: *mut i32,
+) -> i32 {
+    match crate::memory::info::protection::get_region_info(addr) {
+        Ok(info) => {
+            if !region_addr_out.is_null() {
+                unsafe { *region_addr_out = info.address };
+            }
+            if !region_size_out.is_null() {
+                unsafe { *region_size_out = info.size };
+            }
+            if !prot_out.is_null() {
+                unsafe { *prot_out = info.protection.raw() };
+            }
+            MEM_OK
+        }
+        Err(ref e) => protection_err(e),
+    }
+}
+
+/// Finds the memory region containing or following `addr`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_find_region(
+    addr: usize,
+    region_addr_out: *mut usize,
+    region_size_out: *mut usize,
+    prot_out: *mut i32,
+) -> i32 {
+    match crate::memory::info::protection::find_region(addr) {
+        Ok(info) => {
+            if !region_addr_out.is_null() {
+                unsafe { *region_addr_out = info.address };
+            }
+            if !region_size_out.is_null() {
+                unsafe { *region_size_out = info.size };
+            }
+            if !prot_out.is_null() {
+                unsafe { *prot_out = info.protection.raw() };
+            }
+            MEM_OK
+        }
+        Err(ref e) => protection_err(e),
+    }
+}
+
+/// Returns 1 if the address is readable, 0 otherwise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_is_readable(addr: usize) -> i32 {
+    if crate::memory::info::protection::is_readable(addr) {
+        1
+    } else {
+        0
+    }
+}
+
+/// Returns 1 if the address is writable, 0 otherwise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_is_writable(addr: usize) -> i32 {
+    if crate::memory::info::protection::is_writable(addr) {
+        1
+    } else {
+        0
+    }
+}
+
+/// Returns 1 if the address is executable, 0 otherwise.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_is_executable(addr: usize) -> i32 {
+    if crate::memory::info::protection::is_executable(addr) {
+        1
+    } else {
+        0
+    }
+}
+
+/// Changes the memory protection for a region.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_protect(addr: usize, size: usize, protection: i32) -> i32 {
+    match crate::memory::info::protection::protect(
+        addr,
+        size,
+        crate::memory::info::protection::PageProtection::from_raw(protection),
+    ) {
+        Ok(()) => MEM_OK,
+        Err(ref e) => protection_err(e),
+    }
+}
+
+/// C-compatible region info for `mem_get_all_regions`.
+#[repr(C)]
+pub struct MemRegion {
+    pub address: usize,
+    pub size: usize,
+    pub protection: i32,
+}
+
+/// Enumerates all readable memory regions. Writes up to `cap` entries into `buf`.
+/// `count_out` receives the total number of regions (may exceed `cap`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_get_all_regions(
+    buf: *mut MemRegion,
+    cap: usize,
+    count_out: *mut usize,
+) -> i32 {
+    if count_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    match crate::memory::info::protection::get_all_regions() {
+        Ok(regions) => {
+            let total = regions.len();
+            unsafe { *count_out = total };
+            if !buf.is_null() {
+                let to_copy = total.min(cap);
+                for (i, r) in regions.iter().take(to_copy).enumerate() {
+                    unsafe {
+                        *buf.add(i) = MemRegion {
+                            address: r.address,
+                            size: r.size,
+                            protection: r.protection.raw(),
+                        }
+                    };
+                }
+            }
+            MEM_OK
+        }
+        Err(ref e) => protection_err(e),
+    }
+}
+
+// Image Enumeration API
+
+/// C-compatible image info for `mem_image_list`.
+#[repr(C)]
+pub struct MemImage {
+    pub index: u32,
+    pub base: usize,
+}
+
+/// Returns the number of currently loaded images.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_image_count(count_out: *mut usize) -> i32 {
+    if count_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    unsafe { *count_out = crate::memory::info::image::image_count() as usize };
+    MEM_OK
+}
+
+/// Fills `buf` with up to `cap` image entries (index + base address).
+/// `count_out` receives the total number of loaded images.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_image_list(
+    buf: *mut MemImage,
+    cap: usize,
+    count_out: *mut usize,
+) -> i32 {
+    if count_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let images = crate::memory::info::image::get_all_images();
+    let total = images.len();
+    unsafe { *count_out = total };
+    if !buf.is_null() {
+        let to_copy = total.min(cap);
+        for (i, img) in images.iter().take(to_copy).enumerate() {
+            unsafe {
+                *buf.add(i) = MemImage {
+                    index: img.index,
+                    base: img.base,
+                }
+            };
+        }
+    }
+    MEM_OK
+}
+
+/// Gets the full path of a loaded image by its dyld index.
+/// Writes a null-terminated string into `name_buf`.
+/// Returns `MEM_ERR_RANGE` if the buffer is too small, `MEM_ERR_NOT_FOUND` if index is invalid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_image_name(
+    index: u32,
+    name_buf: *mut u8,
+    name_buf_size: usize,
+) -> i32 {
+    if name_buf.is_null() {
+        return MEM_ERR_NULL;
+    }
+    match crate::memory::info::image::get_image_name(index) {
+        Some(name) => {
+            let name_bytes = name.as_bytes();
+            if name_bytes.len() + 1 > name_buf_size {
+                return MEM_ERR_RANGE;
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), name_buf, name_bytes.len());
+                *name_buf.add(name_bytes.len()) = 0; // null terminator
+            }
+            MEM_OK
+        }
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+// Patch Info API
+
+/// Returns the size (in bytes) of the patch applied at `address`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_patch_size(address: usize, size_out: *mut usize) -> i32 {
+    if size_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let registry = PATCH_REGISTRY.lock();
+    match registry.get(&address) {
+        Some(p) => {
+            unsafe { *size_out = p.size() };
+            MEM_OK
+        }
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+/// Reads the original bytes that were backed up when the patch was applied.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_patch_orig_bytes(
+    address: usize,
+    buf: *mut u8,
+    buf_size: usize,
+) -> i32 {
+    if buf.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let registry = PATCH_REGISTRY.lock();
+    match registry.get(&address) {
+        Some(p) => {
+            let orig = p.original_bytes();
+            let to_copy = orig.len().min(buf_size);
+            unsafe { std::ptr::copy_nonoverlapping(orig.as_ptr(), buf, to_copy) };
+            MEM_OK
+        }
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+/// Reads the bytes that were written as the patch.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_patch_patch_bytes(
+    address: usize,
+    buf: *mut u8,
+    buf_size: usize,
+) -> i32 {
+    if buf.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let registry = PATCH_REGISTRY.lock();
+    match registry.get(&address) {
+        Some(p) => {
+            let pb = p.patch_bytes();
+            let to_copy = pb.len().min(buf_size);
+            unsafe { std::ptr::copy_nonoverlapping(pb.as_ptr(), buf, to_copy) };
+            MEM_OK
+        }
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+/// Reads the current live bytes at the patch address.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_patch_curr_bytes(
+    address: usize,
+    buf: *mut u8,
+    buf_size: usize,
+) -> i32 {
+    if buf.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let registry = PATCH_REGISTRY.lock();
+    match registry.get(&address) {
+        Some(p) => {
+            let curr = p.current_bytes();
+            let to_copy = curr.len().min(buf_size);
+            unsafe { std::ptr::copy_nonoverlapping(curr.as_ptr(), buf, to_copy) };
+            MEM_OK
+        }
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+/// Fills `buf` with up to `cap` active patch addresses.
+/// `count_out` receives the total number of active patches.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_patch_list(buf: *mut usize, cap: usize, count_out: *mut usize) -> i32 {
+    if count_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let registry = PATCH_REGISTRY.lock();
+    let total = registry.len();
+    unsafe { *count_out = total };
+    if !buf.is_null() {
+        for (i, &addr) in registry.keys().take(cap).enumerate() {
+            unsafe { *buf.add(i) = addr };
+        }
+    }
+    MEM_OK
+}
+
+/// Returns the number of active patches.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_patch_count() -> usize {
+    PATCH_REGISTRY.lock().len()
+}
+
+// Memory Backup API
+
+/// Creates a backup of `size` bytes at `address`. Returns a handle for later operations.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_backup_create(
+    address: usize,
+    size: usize,
+    handle_out: *mut u64,
+) -> i32 {
+    if handle_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    if address == 0 {
+        return MEM_ERR_NULL;
+    }
+    if size == 0 {
+        return MEM_ERR_EMPTY;
+    }
+    match crate::memory::manipulation::backup::MemoryBackup::create(address, size) {
+        Ok(backup) => {
+            let handle = next_handle();
+            BACKUP_REGISTRY.lock().insert(handle, backup);
+            unsafe { *handle_out = handle };
+            MEM_OK
+        }
+        Err(_) => MEM_ERR_GENERIC,
+    }
+}
+
+/// Restores the original bytes from a backup.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_backup_restore(handle: u64) -> i32 {
+    let registry = BACKUP_REGISTRY.lock();
+    match registry.get(&handle) {
+        Some(backup) => match backup.restore() {
+            Ok(()) => MEM_OK,
+            Err(_) => MEM_ERR_PATCH,
+        },
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+/// Returns the size of the backup.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_backup_size(handle: u64, size_out: *mut usize) -> i32 {
+    if size_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let registry = BACKUP_REGISTRY.lock();
+    match registry.get(&handle) {
+        Some(backup) => {
+            unsafe { *size_out = backup.size() };
+            MEM_OK
+        }
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+/// Returns the address that was backed up.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_backup_address(handle: u64, address_out: *mut usize) -> i32 {
+    if address_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let registry = BACKUP_REGISTRY.lock();
+    match registry.get(&handle) {
+        Some(backup) => {
+            unsafe { *address_out = backup.address() };
+            MEM_OK
+        }
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+/// Reads the stored original bytes into `buf`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_backup_orig_bytes(handle: u64, buf: *mut u8, buf_size: usize) -> i32 {
+    if buf.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let registry = BACKUP_REGISTRY.lock();
+    match registry.get(&handle) {
+        Some(backup) => {
+            let orig = backup.original_bytes();
+            let to_copy = orig.len().min(buf_size);
+            unsafe { std::ptr::copy_nonoverlapping(orig.as_ptr(), buf, to_copy) };
+            MEM_OK
+        }
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+/// Reads the current live bytes at the backed-up address into `buf`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_backup_curr_bytes(handle: u64, buf: *mut u8, buf_size: usize) -> i32 {
+    if buf.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let registry = BACKUP_REGISTRY.lock();
+    match registry.get(&handle) {
+        Some(backup) => {
+            let curr = backup.current_bytes();
+            let to_copy = curr.len().min(buf_size);
+            unsafe { std::ptr::copy_nonoverlapping(curr.as_ptr(), buf, to_copy) };
+            MEM_OK
+        }
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+/// Destroys a backup (frees resources, does not restore).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_backup_destroy(handle: u64) -> i32 {
+    match BACKUP_REGISTRY.lock().remove(&handle) {
+        Some(_) => MEM_OK,
+        None => MEM_ERR_NOT_FOUND,
+    }
+}
+
+// Segment / Section API
+
+/// C-compatible segment/section data.
+#[repr(C)]
+pub struct MemSegment {
+    pub start: usize,
+    pub end: usize,
+    pub size: usize,
+}
+
+/// Gets a named segment from a loaded image (e.g., "__TEXT", "__DATA").
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_get_segment(
+    image_name: *const c_char,
+    segment_name: *const c_char,
+    data_out: *mut MemSegment,
+) -> i32 {
+    if data_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let name = unsafe {
+        match cstr_to_str(image_name) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let seg = unsafe {
+        match cstr_to_str(segment_name) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    match crate::memory::info::macho::get_segment(name, seg) {
+        Ok(data) => {
+            unsafe {
+                *data_out = MemSegment {
+                    start: data.start,
+                    end: data.end,
+                    size: data.size,
+                }
+            };
+            MEM_OK
+        }
+        Err(ref e) => macho_err(e),
+    }
+}
+
+/// Gets a named section within a segment from a loaded image
+/// (e.g., segment "__TEXT", section "__text").
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_get_section(
+    image_name: *const c_char,
+    segment_name: *const c_char,
+    section_name: *const c_char,
+    data_out: *mut MemSegment,
+) -> i32 {
+    if data_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+    let name = unsafe {
+        match cstr_to_str(image_name) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let seg = unsafe {
+        match cstr_to_str(segment_name) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    let sect = unsafe {
+        match cstr_to_str(section_name) {
+            Ok(s) => s,
+            Err(e) => return e,
+        }
+    };
+    match crate::memory::info::macho::get_section(name, seg, sect) {
+        Ok(data) => {
+            unsafe {
+                *data_out = MemSegment {
+                    start: data.start,
+                    end: data.end,
+                    size: data.size,
+                }
+            };
+            MEM_OK
+        }
+        Err(ref e) => macho_err(e),
     }
 }

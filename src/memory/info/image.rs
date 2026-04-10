@@ -5,10 +5,7 @@ use crate::utils::logger;
 use std::ffi::CStr;
 
 #[cfg(feature = "dev_release")]
-use mach2::dyld::{
-    _dyld_get_image_header, _dyld_get_image_name, _dyld_get_image_vmaddr_slide, _dyld_image_count,
-};
-#[cfg(not(feature = "dev_release"))]
+use mach2::dyld::_dyld_get_image_vmaddr_slide;
 use mach2::dyld::{_dyld_get_image_header, _dyld_get_image_name, _dyld_image_count};
 use thiserror::Error;
 
@@ -75,4 +72,55 @@ pub fn get_image_base(image_name: &str) -> Result<usize, ImageError> {
     #[cfg(feature = "dev_release")]
     logger::warning(&format!("Image not found: {}", image_name));
     Err(ImageError::NotFound(image_name.to_string()))
+}
+
+pub struct ImageInfo {
+    pub index: u32,
+    pub name: String,
+    pub base: usize,
+}
+
+/// Returns information about all currently loaded images
+pub fn get_all_images() -> Vec<ImageInfo> {
+    let mut images = Vec::new();
+    unsafe {
+        let count = _dyld_image_count();
+        for i in 0..count {
+            let name_ptr = _dyld_get_image_name(i);
+            if name_ptr.is_null() {
+                continue;
+            }
+            let name = CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
+            let header = _dyld_get_image_header(i);
+            if header.is_null() {
+                continue;
+            }
+            images.push(ImageInfo {
+                index: i,
+                name,
+                base: header as usize,
+            });
+        }
+    }
+    images
+}
+
+/// Returns the number of currently loaded images
+pub fn image_count() -> u32 {
+    unsafe { _dyld_image_count() }
+}
+
+/// Returns the full path of a loaded image by its dyld index, or None if invalid
+pub fn get_image_name(index: u32) -> Option<String> {
+    unsafe {
+        let count = _dyld_image_count();
+        if index >= count {
+            return None;
+        }
+        let name_ptr = _dyld_get_image_name(index);
+        if name_ptr.is_null() {
+            return None;
+        }
+        Some(CStr::from_ptr(name_ptr).to_string_lossy().into_owned())
+    }
 }

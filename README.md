@@ -6,7 +6,7 @@
 
 ARM64 memory manipulation framework for iOS/macOS. Compiled as a static library (`libspecter.a`) consumed via a plain C/C++ header (`specter.h`).
 
-Provides inline function hooking, stealth code patching, hardware breakpoints, memory read/write, symbol resolution, and shellcode loading — all targeting `aarch64-apple-ios` & `aarch64-apple-darwin`.
+Provides inline function hooking, stealth code patching, hardware breakpoints, memory read/write, pattern scanning, symbol resolution, shellcode loading, memory protection querying, image enumeration, Mach-O segment/section querying, and standalone memory backup/restore — all targeting `aarch64-apple-ios` & `aarch64-apple-darwin`.
 
 ## Quick start for Rust sources
 
