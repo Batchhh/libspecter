@@ -33,6 +33,17 @@ make check                            # verify exported symbols match specter.h
 -L<path> -lspectre -lc++ -framework Foundation -framework Security
 ```
 
+## Debug logging
+
+Debug builds automatically log to Apple's unified logging system (`os_log`). Messages appear in **Console.app** under subsystem `com.specter`, category `memory`.
+
+To filter in Console.app, use:
+
+```
+subsystem:com.specter category:memory
+```
+Logging is compiled out of release builds (`cfg(debug_assertions)`).
+
 ## Docs
 
 [docs/usage.md](docs/usage.md) — C/C++ API reference and examples

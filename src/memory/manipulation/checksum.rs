@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 
 use crate::memory::info::protection;
@@ -284,7 +284,7 @@ fn default_tamper_callback(tampered: &[usize]) {
     use super::hook::restore_hook_bytes;
 
     for &addr in tampered {
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::warning(&format!("Hook tampered at {:#x}, restoring...", addr));
 
         if restore_hook_bytes(addr) {
@@ -295,10 +295,10 @@ fn default_tamper_callback(tampered: &[usize]) {
             }
             drop(checksums);
 
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::info(&format!("Hook restored at {:#x}", addr));
         } else {
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::error(&format!("Failed to restore hook at {:#x}", addr));
         }
     }
@@ -327,7 +327,7 @@ pub fn start_monitor(
     let state_clone = Arc::clone(&state);
 
     let handle = thread::spawn(move || {
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::info("Integrity monitor started");
 
         while state_clone.running.load(Ordering::Relaxed) {
@@ -343,7 +343,7 @@ pub fn start_monitor(
             }
         }
 
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::info("Integrity monitor stopped");
     });
 

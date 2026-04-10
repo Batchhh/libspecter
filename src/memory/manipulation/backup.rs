@@ -5,7 +5,7 @@
 
 use crate::memory::manipulation::patch::stealth_write;
 use crate::memory::platform::thread;
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use thiserror::Error;
 
@@ -29,7 +29,7 @@ impl MemoryBackup {
     pub fn create(address: usize, size: usize) -> Result<Self, BackupError> {
         let original_bytes = unsafe { read_bytes(address, size) };
 
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug(&format!("Backup created: {:#x} ({} bytes)", address, size));
 
         Ok(Self {
@@ -50,7 +50,7 @@ impl MemoryBackup {
 
             thread::resume_threads(&suspended);
 
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::debug(&format!("Backup restored: {:#x}", self.address));
         }
         Ok(())

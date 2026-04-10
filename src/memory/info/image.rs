@@ -1,10 +1,10 @@
 //! Dynamic library image lookup utilities
 
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use std::ffi::CStr;
 
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use mach2::dyld::_dyld_get_image_vmaddr_slide;
 use mach2::dyld::{_dyld_get_image_header, _dyld_get_image_name, _dyld_image_count};
 use thiserror::Error;
@@ -51,10 +51,10 @@ pub fn get_image_base(image_name: &str) -> Result<usize, ImageError> {
             let name = CStr::from_ptr(name_ptr).to_string_lossy();
             if name.contains(image_name) {
                 let header = _dyld_get_image_header(i);
-                #[cfg(feature = "dev_release")]
+                #[cfg(debug_assertions)]
                 let slide = _dyld_get_image_vmaddr_slide(i);
 
-                #[cfg(feature = "dev_release")]
+                #[cfg(debug_assertions)]
                 logger::info(&format!(
                     "Found image: {} (Index: {}, Base: {:p}, Slide: {:#x})",
                     name, i, header, slide
@@ -69,7 +69,7 @@ pub fn get_image_base(image_name: &str) -> Result<usize, ImageError> {
         }
     }
 
-    #[cfg(feature = "dev_release")]
+    #[cfg(debug_assertions)]
     logger::warning(&format!("Image not found: {}", image_name));
     Err(ImageError::NotFound(image_name.to_string()))
 }

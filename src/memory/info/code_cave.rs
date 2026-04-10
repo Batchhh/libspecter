@@ -1,7 +1,7 @@
 //! Code cave finder and manager
 
 use crate::memory::info::{image, scan};
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -300,7 +300,7 @@ pub fn find_caves_in_image(
 
     let scan_size = 32 * 1024 * 1024; // 32MB
 
-    #[cfg(feature = "dev_release")]
+    #[cfg(debug_assertions)]
     logger::info(&format!(
         "Scanning image '{}' at {:#x} for code caves (min size: {} bytes)",
         image_name, base, min_size
@@ -337,7 +337,7 @@ pub fn allocate_cave(size: usize) -> Result<CodeCave, CodeCaveError> {
         if cave.size >= size {
             cave.allocate();
             REGISTRY.lock().register(cave.clone())?;
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::info(&format!(
                 "Allocated code cave at {:#x} (size: {} bytes)",
                 cave.address, cave.size
@@ -382,7 +382,7 @@ pub fn allocate_cave_near(target: usize, size: usize) -> Result<CodeCave, CodeCa
 
             cave.allocate();
             REGISTRY.lock().register(cave.clone())?;
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::info(&format!(
                 "Allocated code cave near {:#x} at {:#x} (size: {} bytes)",
                 target, cave.address, cave.size
@@ -404,7 +404,7 @@ pub fn allocate_cave_near(target: usize, size: usize) -> Result<CodeCave, CodeCa
 pub fn free_cave(address: usize) -> Result<(), CodeCaveError> {
     let mut cave = REGISTRY.lock().unregister(address)?;
     cave.free();
-    #[cfg(feature = "dev_release")]
+    #[cfg(debug_assertions)]
     logger::info(&format!("Freed code cave at {:#x}", address));
     Ok(())
 }
@@ -461,6 +461,6 @@ pub fn get_cave_stats() -> (usize, usize) {
 /// Clears all allocated code caves from the registry
 pub fn clear_all_caves() {
     REGISTRY.lock().clear();
-    #[cfg(feature = "dev_release")]
+    #[cfg(debug_assertions)]
     logger::info("Cleared all allocated code caves");
 }

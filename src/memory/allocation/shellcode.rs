@@ -1,7 +1,7 @@
 //! Shellcode loader with symbol resolution and position-independent code support
 
 use crate::memory::{code_cave, info::symbol, rw};
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use std::arch::asm;
 use std::collections::HashMap;
@@ -254,7 +254,7 @@ impl ShellcodeBuilder {
             invalidate_icache(cave.address as *mut c_void, code.len());
         }
 
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::info(&format!(
             "Shellcode loaded at {:#x} ({} bytes)",
             cave.address,

@@ -14,7 +14,7 @@ use super::checksum;
 use crate::config;
 use crate::memory::info::{code_cave, symbol};
 use crate::memory::{image, patch, protection, thread};
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -202,14 +202,14 @@ pub unsafe fn hook_symbol(symbol_name: &str, replacement: usize) -> Result<Hook,
 pub unsafe fn install_at_address(target: usize, replacement: usize) -> Result<usize, HookError> {
     unsafe {
         if REGISTRY.lock().contains_key(&target) {
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::warning("Hook already exists at target");
             return Err(HookError::AlreadyExists(target));
         }
 
         let first_instr = super::rw::read::<u32>(target).map_err(|_| HookError::PatchFailed)?;
         if is_b_instruction(first_instr) {
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::debug("Detected thunk, using short hook");
             return install_thunk_hook(target, replacement, first_instr);
         }
@@ -448,7 +448,7 @@ unsafe fn install_thunk_hook(
         );
         let _ = checksum::register(target, 4);
         thread::resume_threads(&suspended);
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug("Thunk hook installed");
         Ok(trampoline_base)
     }
@@ -517,7 +517,7 @@ unsafe fn install_regular_hook(target: usize, replacement: usize) -> Result<usiz
         );
         let _ = checksum::register(target, MAX_STOLEN_BYTES);
         thread::resume_threads(&suspended);
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug("Hook installed");
         Ok(trampoline_base)
     }
@@ -567,7 +567,7 @@ pub unsafe fn remove_at_address(target: usize) -> bool {
         libc::munmap(entry.trampoline as *mut c_void, TRAMPOLINE_SIZE);
         checksum::unregister(target);
         thread::resume_threads(&suspended);
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug("Hook removed");
         true
     }
@@ -892,7 +892,7 @@ pub unsafe fn install_in_cave_at_address(
         let _ = checksum::register(target, MAX_STOLEN_BYTES);
 
         thread::resume_threads(&suspended);
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug("Cave hook installed");
 
         Ok(Hook {

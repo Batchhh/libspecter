@@ -2,7 +2,7 @@
 
 use std::ptr;
 
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use thiserror::Error;
 
@@ -182,7 +182,7 @@ pub unsafe fn write_bytes(address: usize, data: &[u8]) -> Result<(), RwError> {
         crate::memory::platform::thread::resume_threads(&suspended);
 
         if result.is_ok() {
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::debug("Bytes written");
         }
 

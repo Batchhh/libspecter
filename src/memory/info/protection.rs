@@ -1,6 +1,6 @@
 //! Memory page protection query utilities
 
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use mach2::{
     kern_return::KERN_SUCCESS,
@@ -252,7 +252,7 @@ pub fn get_all_regions() -> Result<Vec<RegionInfo>, ProtectionError> {
         address += size;
     }
 
-    #[cfg(feature = "dev_release")]
+    #[cfg(debug_assertions)]
     logger::info(&format!("Found {} memory regions", regions.len()));
     Ok(regions)
 }

@@ -9,7 +9,7 @@
 use crate::memory::ffi::mach_exc::{
     task_get_exception_ports, task_set_exception_ports, task_set_state,
 };
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use libc::{pthread_create, sysctlbyname};
 use mach2::kern_return::KERN_SUCCESS;
@@ -374,7 +374,7 @@ unsafe fn init_exception_handler() -> Result<(), BrkHookError> {
             );
         }
 
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::info(&format!(
             "Breakpoint hooking initialized ({} HW breakpoints)",
             bp_count
@@ -521,7 +521,7 @@ pub unsafe fn install_at_address(
         manager.add_hook(target, replacement)?;
         apply_debug_state(&manager)?;
 
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::info(&format!("BrkHook: {:#x} → {:#x}", target, replacement));
 
         Ok(Breakpoint { target })

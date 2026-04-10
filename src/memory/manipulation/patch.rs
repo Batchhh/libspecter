@@ -5,7 +5,7 @@
 
 use crate::memory::ffi::mach_exc::mach_vm_remap;
 use crate::memory::platform::thread;
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use jit_assembler::aarch64::Aarch64InstructionBuilder;
 use jit_assembler::common::InstructionBuilder;
@@ -74,26 +74,26 @@ impl Patch {
             let suspended = match thread::suspend_other_threads() {
                 Ok(s) => s,
                 Err(_e) => {
-                    #[cfg(feature = "dev_release")]
+                    #[cfg(debug_assertions)]
                     logger::error(&format!("Revert suspend failed: {}", _e));
                     return;
                 }
             };
 
             if let Err(_e) = stealth_write(self.address, &self.original_bytes) {
-                #[cfg(feature = "dev_release")]
+                #[cfg(debug_assertions)]
                 logger::error(&format!("Revert write failed: {}", _e));
             }
 
             if let Some(cave) = &self.cave
                 && let Err(_e) = crate::memory::info::code_cave::free_cave(cave.address)
             {
-                #[cfg(feature = "dev_release")]
+                #[cfg(debug_assertions)]
                 logger::error(&format!("Cave free failed: {}", _e));
             }
 
             thread::resume_threads(&suspended);
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::debug("Patch reverted");
         }
     }
@@ -158,7 +158,7 @@ pub fn apply(rva: usize, hex_str: &str) -> Result<Patch, PatchError> {
         }
 
         thread::resume_threads(&suspended);
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug("Patch applied");
 
         Ok(Patch {
@@ -218,7 +218,7 @@ where
         }
 
         thread::resume_threads(&suspended);
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug("ASM patch applied");
 
         Ok(Patch {
@@ -321,7 +321,7 @@ where
         }
 
         thread::resume_threads(&suspended);
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug("Cave ASM patch applied");
 
         Ok(Patch {
@@ -413,7 +413,7 @@ pub fn apply_in_cave(rva: usize, hex_str: &str) -> Result<Patch, PatchError> {
         }
 
         thread::resume_threads(&suspended);
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug("Cave patch applied");
 
         Ok(Patch {
@@ -451,7 +451,7 @@ pub fn apply_at_address(address: usize, bytes: &[u8]) -> Result<Patch, PatchErro
         }
 
         thread::resume_threads(&suspended);
-        #[cfg(feature = "dev_release")]
+        #[cfg(debug_assertions)]
         logger::debug("Address patch applied");
 
         Ok(Patch {
@@ -502,7 +502,7 @@ pub(crate) unsafe fn stealth_write(address: usize, data: &[u8]) -> Result<(), Pa
         );
 
         if kr != KERN_SUCCESS {
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::debug("Remap unavailable, fallback");
             return fallback_write(address, data);
         }
@@ -510,7 +510,7 @@ pub(crate) unsafe fn stealth_write(address: usize, data: &[u8]) -> Result<(), Pa
         // Check if the remap's max protection allows writing
         if (max_prot & VM_PROT_WRITE) == 0 {
             mach_vm_deallocate(task, remap_addr, page_len as u64);
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::debug("Remap max prot insufficient, fallback");
             return fallback_write(address, data);
         }
@@ -526,7 +526,7 @@ pub(crate) unsafe fn stealth_write(address: usize, data: &[u8]) -> Result<(), Pa
 
         if kr != KERN_SUCCESS {
             mach_vm_deallocate(task, remap_addr, page_len as u64);
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::debug("Remap protect failed, fallback");
             return fallback_write(address, data);
         }

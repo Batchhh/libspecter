@@ -2,7 +2,7 @@
 
 use crate::memory::image;
 use crate::memory::info::protection;
-#[cfg(feature = "dev_release")]
+#[cfg(debug_assertions)]
 use crate::utils::logger;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -165,7 +165,7 @@ pub fn scan_pattern_cached(
     {
         let cache = SCAN_CACHE.lock();
         if let Some(cached) = cache.get(&cache_key) {
-            #[cfg(feature = "dev_release")]
+            #[cfg(debug_assertions)]
             logger::info(&format!("Cache hit for pattern: {}", ida_pattern));
             return Ok(cached.clone());
         }
@@ -180,7 +180,7 @@ pub fn scan_pattern_cached(
 /// Clears the scan cache
 pub fn clear_cache() {
     SCAN_CACHE.lock().clear();
-    #[cfg(feature = "dev_release")]
+    #[cfg(debug_assertions)]
     logger::info("Scan cache cleared");
 }
 
