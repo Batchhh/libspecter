@@ -346,8 +346,6 @@ Intercepts execution using ARM64 debug registers and Mach exception handling. **
 ```c
 static void replacement(void) {
     printf("intercepted\n");
-    // WARNING: calling the original directly would re-trigger the breakpoint.
-    // For call-original patterns, prefer inline hooks (mem_hook_install).
 }
 
 void install(void) {
@@ -369,8 +367,42 @@ void install(void) {
 
 > **Hardware breakpoints vs inline hooks:**
 > - Breakpoints leave **zero code footprint** — ideal for read-only pages or integrity-checked code.
-> - Inline hooks let you **call the original** easily via the trampoline.
+> - Inline hooks call the original through a trampoline.
+> - Breakpoints call the original target directly while temporarily disabled on the current thread.
 > - Breakpoints are limited to **6 concurrent** addresses.
+
+### 7.1 Calling the Original from a Breakpoint Hook
+
+Breakpoint hooks do not create trampolines. Keep the original as the absolute
+target address, temporarily disable breakpoints on the current thread, call the
+typed original function pointer, then re-enable breakpoints.
+
+```cpp
+using AddRecoil_t = void (*)(void *self, float amount);
+
+static uint64_t g_addRecoilBrk = 0;
+static AddRecoil_t orig_AddRecoil = nullptr;
+
+void hook_AddRecoil(void *self, float amount) {
+    if (orig_AddRecoil) {
+        CHECK(mem_brk_suspend_self());
+        orig_AddRecoil(self, amount);
+        CHECK(mem_brk_resume_self());
+    }
+}
+
+void install() {
+    CHECK(mem_init("UnityFramework", nullptr));
+
+    CHECK(mem_brk_install(0x123,
+                          reinterpret_cast<uintptr_t>(hook_AddRecoil),
+                          &g_addRecoilBrk));
+
+    uintptr_t absolute = 0;
+    CHECK(mem_brk_target(g_addRecoilBrk, &absolute));
+    orig_AddRecoil = reinterpret_cast<AddRecoil_t>(absolute);
+}
+```
 
 ---
 

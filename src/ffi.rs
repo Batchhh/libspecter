@@ -781,6 +781,47 @@ pub unsafe extern "C" fn mem_brk_remove_at(target: usize) -> i32 {
     }
 }
 
+/// Returns the absolute target address watched by a breakpoint handle.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_brk_target(handle: u64, target_out: *mut usize) -> i32 {
+    if target_out.is_null() {
+        return MEM_ERR_NULL;
+    }
+
+    let registry = BRK_REGISTRY.lock();
+    let bp = match registry.get(&handle) {
+        Some(bp) => bp,
+        None => return MEM_ERR_NOT_FOUND,
+    };
+
+    unsafe { *target_out = bp.target() };
+    MEM_OK
+}
+
+/// Temporarily disables hardware breakpoint hooks on the current thread.
+///
+/// Call this immediately before invoking a breakpoint-hooked original function
+/// from C/C++ so execution does not recurse back into the replacement.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_brk_suspend_self() -> i32 {
+    match unsafe { crate::memory::platform::breakpoint::suspend_self() } {
+        Ok(()) => MEM_OK,
+        Err(ref e) => brk_err(e),
+    }
+}
+
+/// Re-enables hardware breakpoint hooks on the current thread.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mem_brk_resume_self() -> i32 {
+    match unsafe { crate::memory::platform::breakpoint::resume_self() } {
+        Ok(()) => MEM_OK,
+        Err(ref e) => brk_err(e),
+    }
+}
+
 /// Returns the number of currently active hardware breakpoints.
 #[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]

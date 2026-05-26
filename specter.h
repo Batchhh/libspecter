@@ -238,6 +238,20 @@ int32_t mem_brk_remove(uint64_t handle);
 /** Remove breakpoint by target address. */
 int32_t mem_brk_remove_at(uintptr_t target);
 
+/** Return the absolute target address watched by a breakpoint handle. */
+int32_t mem_brk_target(uint64_t handle,
+                       uintptr_t *target_out);
+
+/** Disable hardware breakpoint hooks on the current thread.
+ *
+ * Use immediately before calling the original function for a breakpoint hook
+ * to avoid recursively entering the replacement.
+ */
+int32_t mem_brk_suspend_self(void);
+
+/** Re-enable hardware breakpoint hooks on the current thread. */
+int32_t mem_brk_resume_self(void);
+
 /** Number of currently active hardware breakpoints. */
 int32_t mem_brk_active_count(void);
 
